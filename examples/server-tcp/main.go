@@ -20,10 +20,10 @@ func main() {
 	log.SetLevel(logx.LevelDebug)
 
 	srv := server.New(server.Config{
-		Address: "127.0.0.1:8888",
+		Address: "127.0.0.1:11111",
 		Certs:   nil,
 		Timeout: 15 * time.Second,
-		Network: "tcp",
+		Network: "udp",
 	}, log)
 
 	ctx, cancel := context.WithTimeout(context.TODO(), 120*time.Second)
@@ -42,6 +42,6 @@ type Echo struct {
 
 func (*Echo) Handler(w io.Writer, r io.Reader, addr string) {
 	b, _ := io.ReadAll(r)
-	fmt.Println("[IN]", string(b), "[addr]", addr)
-	w.Write(b)
+	fmt.Println("[------", addr, "------]\n", string(b))
+	// w.Write(b)
 }

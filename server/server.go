@@ -135,25 +135,28 @@ func (v *_server) handlingUDP(ctx context.Context, l net.PacketConn) error {
 		default:
 		}
 
-		readBuff := internal.BuffPool.Get()
-		n, addr, err := internal.CopyFrom(readBuff, l)
-		if err != nil || n == 0 {
-			internal.BuffPool.Put(readBuff)
-			return err
+		b := bytesPool.Get()
+		n, addr, err := l.ReadFrom(b.Slice)
+		if err != nil {
+			return internal.NormalCloseError(err)
+		}
+		if n == 0 {
+			bytesPool.Put(b)
+			continue
 		}
 
 		v.wg.Background(func() {
-			defer internal.BuffPool.Put(readBuff)
+			wBuff, rBuff := bufferPool.Get(), bufferPool.Get()
+			rBuff.Write(b.Slice[:n])
 
-			select {
-			case <-ctx.Done():
-				return
-			default:
-			}
+			defer func() {
+				bytesPool.Put(b)
+				bufferPool.Put(wBuff)
+				bufferPool.Put(rBuff)
+			}()
 
-			writeBuff := internal.BuffPool.Get()
-			v.handler.Handler(writeBuff, readBuff, addr.String())
-			if _, err0 := internal.CopyTo(l, writeBuff, addr); err0 != nil {
+			v.handler.Handler(wBuff, rBuff, addr.String())
+			if _, err0 := l.WriteTo(wBuff.Bytes(), addr); err0 != nil {
 				v.log.WithFields(logx.Fields{
 					"err":  err0.Error(),
 					"addr": addr.String(),
