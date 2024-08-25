@@ -67,10 +67,7 @@ func (s *ServerTCP) init() (err error) {
 func (s *ServerTCP) ListenAndServe(ctx xc.Context) (err error) {
 	defer func() {
 		ctx.Close()
-		s.Logger.WithFields(logx.Fields{
-			"err": err.Error(),
-			"ip":  s.Config.Addr,
-		}).Errorf("Epoll server stopped")
+		s.Logger.Error("Epoll server stopped", "err", err, "ip", s.Config.Addr)
 	}()
 
 	if err = s.init(); err != nil {
@@ -88,9 +85,7 @@ func (s *ServerTCP) ListenAndServe(ctx xc.Context) (err error) {
 	s.wg.Background(func() {
 		s.epollListen(ctx)
 	})
-	s.Logger.WithFields(logx.Fields{
-		"ip": s.Config.Addr,
-	}).Infof("Epoll server started")
+	s.Logger.Info("Epoll server started", "ip", s.Config.Addr)
 	s.wg.Wait()
 	return
 }
@@ -106,16 +101,12 @@ func (s *ServerTCP) connAccept(ctx xc.Context) {
 			case <-ctx.Done():
 				return
 			default:
-				s.Logger.WithFields(logx.Fields{
-					"err": err.Error(),
-				}).Errorf("Epoll conn accept")
+				s.Logger.Error("Epoll conn accept", "err", err)
 				return
 			}
 		}
 		if err = s.epoll.Accept(conn); err != nil {
-			s.Logger.WithFields(logx.Fields{
-				"err": err.Error(), "ip": conn.RemoteAddr().String(),
-			}).Errorf("Epoll append connect")
+			s.Logger.Error("Epoll append connect", "err", err, "ip", conn.RemoteAddr())
 		}
 	}
 }
@@ -126,9 +117,7 @@ func (s *ServerTCP) epollListen(ctx xc.Context) {
 	}()
 
 	if err := s.epoll.Listen(ctx.Context()); err != nil {
-		s.Logger.WithFields(logx.Fields{
-			"err": err.Error(),
-		}).Errorf("Epoll listen connects")
+		s.Logger.Error("Epoll listen connects", "err", err)
 	}
 	fmt.Println(1)
 }

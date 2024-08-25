@@ -14,7 +14,6 @@ import (
 
 	"go.osspkg.com/errors"
 	"go.osspkg.com/ioutils"
-	"go.osspkg.com/logx"
 	netfd "go.osspkg.com/network/fd"
 	"golang.org/x/sys/unix"
 )
@@ -133,9 +132,7 @@ func (v *_epoll) getWaited(list *[]int32) (int, error) {
 			*list = append(*list, v.events[i].Fd)
 		default:
 			if err = v.closeConn(v.events[i].Fd); err != nil {
-				v.cfg.Logger.WithFields(logx.Fields{
-					"err": err.Error(),
-				}).Errorf("Epoll close connect")
+				v.cfg.Logger.Error("Epoll close connect", "err", err)
 			}
 		}
 	}
@@ -198,19 +195,14 @@ func (v *_epoll) piping(ctx context.Context) {
 					return
 				}
 				if !isClosedError(e) {
-					v.cfg.Logger.WithFields(logx.Fields{
-						"err": e.Error(),
-						"ip":  conn.Conn().RemoteAddr().String(),
-					}).Warnf("Epoll handling connect")
+					v.cfg.Logger.Warn("Epoll handling connect", "err", e, "ip", conn.Conn().RemoteAddr())
 					return
 				}
 				e = v.closeConn(conn.FD())
 				if e == nil || isClosedError(e) {
 					return
 				}
-				v.cfg.Logger.WithFields(logx.Fields{
-					"err": e.Error(),
-				}).Errorf("Epoll close connect")
+				v.cfg.Logger.Error("Epoll close connect", "err", e)
 			}()
 		}
 	}

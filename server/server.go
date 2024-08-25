@@ -120,9 +120,7 @@ func (v *_server) handlingUDP(ctx context.Context, l net.PacketConn) error {
 		t := time.Now().Add(v.conf.Timeout)
 		err := errors.Wrap(l.SetDeadline(t), l.SetReadDeadline(t), l.SetWriteDeadline(t))
 		if err != nil {
-			v.log.WithFields(logx.Fields{
-				"err": err.Error(),
-			}).Warnf("update deadline")
+			v.log.Warn("UDP server: update deadline", "err", err)
 			cancel()
 			return
 		}
@@ -157,10 +155,7 @@ func (v *_server) handlingUDP(ctx context.Context, l net.PacketConn) error {
 
 			v.handler.Handler(wBuff, rBuff, addr.String())
 			if _, err0 := l.WriteTo(wBuff.Bytes(), addr); err0 != nil {
-				v.log.WithFields(logx.Fields{
-					"err":  err0.Error(),
-					"addr": addr.String(),
-				}).Warnf("send message")
+				v.log.Warn("UDP server: send message", "err", err0, "addr", addr)
 			}
 		})
 	}
@@ -193,20 +188,14 @@ func (v *_server) handlingTCP(ctx context.Context, l net.Listener) error {
 		t := time.Now().Add(v.conf.Timeout)
 		err = errors.Wrap(conn.SetDeadline(t), conn.SetReadDeadline(t), conn.SetWriteDeadline(t))
 		if err != nil {
-			v.log.WithFields(logx.Fields{
-				"err":  err.Error(),
-				"addr": conn.RemoteAddr().String(),
-			}).Warnf("update deadline")
+			v.log.Warn("TCP server: update deadline", "err", err, "addr", conn.RemoteAddr())
 			conn.Close() // nolint: errcheck
 			continue
 		}
 
 		if tc, ok := conn.(*tls.Conn); ok {
 			if err = tc.HandshakeContext(ctx); err != nil {
-				v.log.WithFields(logx.Fields{
-					"err":  err.Error(),
-					"addr": conn.RemoteAddr().String(),
-				}).Warnf("handshake")
+				v.log.Warn("TCP server: handshake", "err", err, "addr", conn.RemoteAddr())
 				conn.Close() // nolint: errcheck
 				continue
 			}
@@ -229,10 +218,7 @@ func (v *_server) handlingTCP(ctx context.Context, l net.Listener) error {
 				v.handler.Handler(cp, cp, cp.Addr())
 				return
 			} else {
-				v.log.WithFields(logx.Fields{
-					"err":  err.Error(),
-					"addr": conn.RemoteAddr().String(),
-				}).Warnf("read message")
+				v.log.Warn("TCP server: read message", "err", err, "addr", conn.RemoteAddr())
 			}
 			conn.Close() // nolint: errcheck
 		})
