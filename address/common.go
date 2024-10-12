@@ -37,7 +37,12 @@ func CheckHostPort(addr string) string {
 	hp := strings.Split(addr, ":")
 	if len(hp) != 2 {
 		tmp := make([]string, 2)
-		copy(hp, tmp)
+		for i, s := range hp {
+			if i > 1 {
+				break
+			}
+			tmp[i] = s
+		}
 		hp = tmp
 	}
 	if len(hp[0]) == 0 {
