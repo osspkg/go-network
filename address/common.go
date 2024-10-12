@@ -45,7 +45,7 @@ func CheckHostPort(addr string) string {
 	}
 	if len(hp[1]) == 0 {
 		if v, err := RandomPort(hp[0]); err == nil {
-			hp[1] = v
+			return v
 		} else {
 			hp[1] = "80"
 		}
