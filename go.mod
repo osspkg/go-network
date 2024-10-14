@@ -5,7 +5,7 @@ go 1.21
 require (
 	go.osspkg.com/errors v0.3.1
 	go.osspkg.com/ioutils v0.4.7
-	go.osspkg.com/logx v0.4.1
+	go.osspkg.com/logx v0.4.2
 	go.osspkg.com/routine v0.3.1
 	go.osspkg.com/syncing v0.3.0
 	go.osspkg.com/xc v0.3.1
