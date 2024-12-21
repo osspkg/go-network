@@ -7,9 +7,10 @@ package main
 
 import (
 	"bytes"
-	"context"
 	"fmt"
 	"io"
+	"os"
+	"sync/atomic"
 	"time"
 
 	"go.osspkg.com/network/client"
@@ -18,26 +19,46 @@ import (
 
 func main() {
 	cli := &client.Client{
-		Address: "127.0.0.1:8888",
-		Timeout: 1 * time.Second,
-		Network: "tcp",
+		Address:      os.Getenv("ADDRESS"),
+		Network:      os.Getenv("NETWORK"),
+		MaxIdleConns: 10,
 	}
 
-	ctx, _ := context.WithTimeout(context.TODO(), 15*time.Second)
-
-	wg := syncing.NewGroup()
-	for i := 0; i < 10000; i++ {
-		i := i
-		wg.Background(func() {
-			in := bytes.NewBufferString("<-->")
-			out := bytes.NewBuffer(nil)
-			if err := cli.Do(ctx, in, out); err != nil {
-				fmt.Println(i, "ERR", err)
-				return
-			}
-			b, err := io.ReadAll(out)
-			fmt.Println(i, "E", err, "B", string(b))
-		})
+	if cli.Network == "quic" {
+		cli.Certificate = &client.Certificate{InsecureSkipVerify: true}
 	}
-	wg.Wait()
+
+	var (
+		good int64
+		fail int64
+	)
+
+	for i := 0; i < 3; i++ {
+		fmt.Println("------------ STEP", i, "---------------")
+		wg := syncing.NewGroup()
+		for i := 0; i < 100000; i++ {
+			i := i
+			wg.Background(func() {
+				in := bytes.NewBufferString(fmt.Sprintf("<- %d ->", i))
+				out := bytes.NewBuffer(nil)
+				if err := cli.Do(in, out); err != nil {
+					fmt.Println(i, "ERR", err)
+					atomic.AddInt64(&fail, 1)
+					return
+				}
+				b, err := io.ReadAll(out)
+				fmt.Println(i, "E", err, "B", string(b))
+				atomic.AddInt64(&good, 1)
+			})
+		}
+		wg.Wait()
+
+		time.Sleep(5 * time.Second)
+	}
+
+	fmt.Print(
+		"\n-------------------------\n",
+		"good\t", good, "\tfail\t", fail,
+		"\n-------------------------\n",
+	)
 }

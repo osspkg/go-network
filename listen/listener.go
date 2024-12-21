@@ -7,85 +7,69 @@ package listen
 
 import (
 	"context"
-	"crypto/rand"
 	"crypto/tls"
 	"fmt"
 	"io"
 	"net"
 
-	netaddres "go.osspkg.com/network/address"
+	"github.com/quic-go/quic-go"
+	"go.osspkg.com/network/internal"
 )
 
-type Cert struct {
-	CertFile string `yaml:"cert_file"`
-	KeyFile  string `yaml:"key_file"`
-}
-
-func New(ctx context.Context, network, address string, certs ...Cert) (io.Closer, error) {
-	address = netaddres.CheckHostPort(address)
+func New(ctx context.Context, network, address string, certs ...Certificate) (io.Closer, error) {
+	switch network {
+	case internal.NetUDP, internal.NetUNIX:
+		if len(certs) > 0 {
+			return nil, fmt.Errorf("%s not support tls", network)
+		}
+	default:
+	}
 
 	switch network {
-	case "tcp":
-		return newTCPListen(ctx, network, address, certs...)
-	case "unix":
-		return newTCPListen(ctx, network, address)
-	case "udp":
-		return newUDPListen(ctx, network, address)
+	case internal.NetTCP:
+		return newListen(ctx, network, address, certs...)
+	case internal.NetUDP:
+		return newListenPacket(ctx, network, address)
+	case internal.NetUNIX:
+		return newListen(ctx, network, address)
+	case internal.NetQUIC:
+		return newListenQUIC(ctx, address, certs...)
 	default:
 		return nil, fmt.Errorf("invalid network type, use: tcp, udp, unix")
 	}
 }
 
-func newUDPListen(ctx context.Context, network, address string) (net.PacketConn, error) {
+func newListenPacket(ctx context.Context, network, address string) (net.PacketConn, error) {
 	var lc net.ListenConfig
-	l, err := lc.ListenPacket(ctx, network, address)
-	if err != nil {
-		return nil, err
-	}
-	return l, nil
+	return lc.ListenPacket(ctx, network, address)
 }
 
-func newTCPListen(ctx context.Context, network, address string, certs ...Cert) (net.Listener, error) {
+func newListen(ctx context.Context, network, address string, certs ...Certificate) (l net.Listener, err error) {
 	var lc net.ListenConfig
-	l, err := lc.Listen(ctx, network, address)
-	if err != nil {
+	if l, err = lc.Listen(ctx, network, address); err != nil {
 		return nil, err
 	}
+
 	if len(certs) == 0 {
-		return l, nil
+		return
 	}
-	config, err := tlsConfig(certs...)
-	if err != nil {
+
+	var conf *tls.Config
+	if conf, err = tlsConfig(certs...); err != nil {
 		return nil, err
 	}
-	tl := tls.NewListener(l, config)
-	return tl, nil
+	return tls.NewListener(l, conf), nil
 }
 
-func tlsConfig(certs ...Cert) (*tls.Config, error) {
-	certificates := make([]tls.Certificate, 0, len(certs))
-	for _, c := range certs {
-		cert, err := tls.LoadX509KeyPair(c.CertFile, c.KeyFile)
-		if err != nil {
-			return nil, err
-		}
-		certificates = append(certificates, cert)
+func newListenQUIC(_ context.Context, address string, certs ...Certificate) (l *quic.Listener, err error) {
+	if len(certs) == 0 {
+		return nil, fmt.Errorf("QUIC cant work without tls")
 	}
-	config := tls.Config{
-		MinVersion:   tls.VersionTLS13,
-		Certificates: certificates,
-		Rand:         rand.Reader,
-		CurvePreferences: []tls.CurveID{
-			tls.CurveP521,
-			tls.CurveP384,
-			tls.CurveP256,
-		},
-		CipherSuites: []uint16{
-			tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
-			tls.TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA,
-			tls.TLS_RSA_WITH_AES_256_GCM_SHA384,
-			tls.TLS_RSA_WITH_AES_256_CBC_SHA,
-		},
+	var conf *tls.Config
+	if conf, err = tlsConfig(certs...); err != nil {
+		return nil, err
 	}
-	return &config, nil
+
+	conf.NextProtos = append(conf.NextProtos, "quic")
+	return quic.ListenAddr(address, conf, &quic.Config{EnableDatagrams: true})
 }

@@ -9,13 +9,10 @@ import (
 	"context"
 	"fmt"
 	"io"
-
-	"go.osspkg.com/logx"
 )
 
 type (
 	Option struct {
-		Logger         logx.Logger
 		Handler        func(ctx context.Context, w io.Writer, r io.Reader) error
 		CountEvents    uint
 		WaitIntervalMS uint
@@ -25,9 +22,6 @@ type (
 func (c Option) Validate() error {
 	if c.Handler == nil {
 		return fmt.Errorf("epoll handler is empty")
-	}
-	if c.Logger == nil {
-		return fmt.Errorf("epoll logger is empty")
 	}
 	if c.CountEvents == 0 {
 		return fmt.Errorf("epoll count events is empty")

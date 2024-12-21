@@ -33,7 +33,6 @@ type (
 	ServerTCP struct {
 		wg       syncing.Group
 		Handler  func(ctx context.Context, w io.Writer, r io.Reader) error
-		Logger   logx.Logger
 		Config   ConfigTCP
 		listener net.Listener
 		epoll    TEpoll
@@ -41,9 +40,6 @@ type (
 )
 
 func (s *ServerTCP) init() (err error) {
-	if s.Logger == nil {
-		return fmt.Errorf("epoll tcp: logger is empty")
-	}
 	if s.Handler == nil {
 		return fmt.Errorf("epoll tcp: handler is empty")
 	}
@@ -56,7 +52,6 @@ func (s *ServerTCP) init() (err error) {
 		s.Config.WaitIntervalMS = 500
 	}
 	s.epoll, err = New(Option{
-		Logger:         s.Logger,
 		Handler:        s.Handler,
 		CountEvents:    s.Config.CountEvents,
 		WaitIntervalMS: s.Config.WaitIntervalMS,
@@ -67,7 +62,7 @@ func (s *ServerTCP) init() (err error) {
 func (s *ServerTCP) ListenAndServe(ctx xc.Context) (err error) {
 	defer func() {
 		ctx.Close()
-		s.Logger.Error("Epoll server stopped", "err", err, "ip", s.Config.Addr)
+		logx.Error("Epoll server stopped", "err", err, "ip", s.Config.Addr)
 	}()
 
 	if err = s.init(); err != nil {
@@ -85,7 +80,7 @@ func (s *ServerTCP) ListenAndServe(ctx xc.Context) (err error) {
 	s.wg.Background(func() {
 		s.epollListen(ctx)
 	})
-	s.Logger.Info("Epoll server started", "ip", s.Config.Addr)
+	logx.Info("Epoll server started", "ip", s.Config.Addr)
 	s.wg.Wait()
 	return
 }
@@ -101,12 +96,12 @@ func (s *ServerTCP) connAccept(ctx xc.Context) {
 			case <-ctx.Done():
 				return
 			default:
-				s.Logger.Error("Epoll conn accept", "err", err)
+				logx.Error("Epoll conn accept", "err", err)
 				return
 			}
 		}
 		if err = s.epoll.Accept(conn); err != nil {
-			s.Logger.Error("Epoll append connect", "err", err, "ip", conn.RemoteAddr())
+			logx.Error("Epoll append connect", "err", err, "ip", conn.RemoteAddr())
 		}
 	}
 }
@@ -117,7 +112,6 @@ func (s *ServerTCP) epollListen(ctx xc.Context) {
 	}()
 
 	if err := s.epoll.Listen(ctx.Context()); err != nil {
-		s.Logger.Error("Epoll listen connects", "err", err)
+		logx.Error("Epoll listen connects", "err", err)
 	}
-	fmt.Println(1)
 }

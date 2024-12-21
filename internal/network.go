@@ -5,17 +5,38 @@
 
 package internal
 
-import "fmt"
+import (
+	"fmt"
+	"time"
 
-var passableNetwork = map[string]struct{}{
-	"tcp":  {},
-	"udp":  {},
-	"unix": {},
-}
+	"go.osspkg.com/errors"
+)
+
+const (
+	NetTCP  = "tcp"
+	NetUDP  = "udp"
+	NetUNIX = "unix"
+	NetQUIC = "quic"
+)
 
 func IsPassableNetwork(network string) error {
-	if _, ok := passableNetwork[network]; !ok {
-		return fmt.Errorf("invalid network type, use: tcp, udp, unix")
+	switch network {
+	case NetTCP, NetUDP, NetUNIX, NetQUIC:
+		return nil
+	default:
+		return fmt.Errorf("invalid network type, use: tcp, udp, unix, quic")
 	}
-	return nil
+}
+
+type TDeadline interface {
+	SetReadDeadline(t time.Time) error
+	SetWriteDeadline(t time.Time) error
+}
+
+func Deadline(c TDeadline, ttl time.Duration) error {
+	t := time.Now().Add(ttl)
+	return errors.Wrap(
+		c.SetReadDeadline(t),
+		c.SetWriteDeadline(t),
+	)
 }

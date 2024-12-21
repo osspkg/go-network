@@ -8,19 +8,12 @@ package main
 import (
 	"context"
 	"io"
-	"os"
 
-	"go.osspkg.com/logx"
 	"go.osspkg.com/network/epoll"
 	"go.osspkg.com/xc"
 )
 
 func main() {
-	logger := logx.New()
-	logger.SetLevel(logx.LevelDebug)
-	logger.SetFormatter(logx.NewFormatString())
-	logger.SetOutput(os.Stdout)
-
 	serv := &epoll.ServerTCP{
 		Handler: func(_ context.Context, w io.Writer, r io.Reader) error {
 			b, err := io.ReadAll(r)
@@ -30,9 +23,8 @@ func main() {
 			_, err = w.Write(append([]byte(">> "), b...))
 			return err
 		},
-		Logger: logger,
 		Config: epoll.ConfigTCP{
-			Addr:           "127.0.0.1:11111",
+			Addr:           "127.0.0.1:8888",
 			CountEvents:    100,
 			WaitIntervalMS: 300,
 		},

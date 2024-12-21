@@ -12,8 +12,10 @@ import (
 	"sync"
 	"syscall"
 
+	"go.osspkg.com/do"
 	"go.osspkg.com/errors"
 	"go.osspkg.com/ioutils"
+	"go.osspkg.com/logx"
 	netfd "go.osspkg.com/network/fd"
 	"golang.org/x/sys/unix"
 )
@@ -132,7 +134,7 @@ func (v *_epoll) getWaited(list *[]int32) (int, error) {
 			*list = append(*list, v.events[i].Fd)
 		default:
 			if err = v.closeConn(v.events[i].Fd); err != nil {
-				v.cfg.Logger.Error("Epoll close connect", "err", err)
+				logx.Error("Epoll close connect", "err", err)
 			}
 		}
 	}
@@ -185,7 +187,7 @@ func (v *_epoll) piping(ctx context.Context) {
 			return
 
 		case conn := <-v.pipe:
-			go func() {
+			do.Async(func() {
 				defer func() {
 					v.setConn(conn)
 				}()
@@ -195,15 +197,17 @@ func (v *_epoll) piping(ctx context.Context) {
 					return
 				}
 				if !isClosedError(e) {
-					v.cfg.Logger.Warn("Epoll handling connect", "err", e, "ip", conn.Conn().RemoteAddr())
+					logx.Warn("Epoll handling connect", "err", e, "ip", conn.Conn().RemoteAddr())
 					return
 				}
 				e = v.closeConn(conn.FD())
 				if e == nil || isClosedError(e) {
 					return
 				}
-				v.cfg.Logger.Error("Epoll close connect", "err", e)
-			}()
+				logx.Error("Epoll close connect", "err", e)
+			}, func(e error) {
+				logx.Error("Epoll pipe panic", "err", errors.Unwrap(e), "full", e)
+			})
 		}
 	}
 }
