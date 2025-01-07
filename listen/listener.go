@@ -13,6 +13,7 @@ import (
 	"net"
 
 	"github.com/quic-go/quic-go"
+
 	"go.osspkg.com/network/internal"
 )
 
@@ -55,7 +56,7 @@ func newListen(ctx context.Context, network, address string, certs ...Certificat
 	}
 
 	var conf *tls.Config
-	if conf, err = tlsConfig(certs...); err != nil {
+	if conf, err = NewTLSConfig(certs...); err != nil {
 		return nil, err
 	}
 	return tls.NewListener(l, conf), nil
@@ -66,7 +67,7 @@ func newListenQUIC(_ context.Context, address string, certs ...Certificate) (l *
 		return nil, fmt.Errorf("QUIC cant work without tls")
 	}
 	var conf *tls.Config
-	if conf, err = tlsConfig(certs...); err != nil {
+	if conf, err = NewTLSConfig(certs...); err != nil {
 		return nil, err
 	}
 

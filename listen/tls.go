@@ -22,7 +22,7 @@ type Certificate struct {
 	AutoGenerate bool     `yaml:"auto_generate"`
 }
 
-func tlsConfig(certs ...Certificate) (*tls.Config, error) {
+func NewTLSConfig(certs ...Certificate) (*tls.Config, error) {
 	rootCA := x509.NewCertPool()
 	certificates := make([]tls.Certificate, 0, len(certs))
 
