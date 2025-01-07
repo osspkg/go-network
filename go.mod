@@ -1,6 +1,6 @@
 module go.osspkg.com/network
 
-go 1.22.5
+go 1.22.10
 
 require (
 	github.com/quic-go/quic-go v0.48.2
