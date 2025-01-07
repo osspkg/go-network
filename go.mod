@@ -10,8 +10,8 @@ require (
 	go.osspkg.com/ioutils v0.4.8
 	go.osspkg.com/logx v0.4.2
 	go.osspkg.com/syncing v0.3.0
-	go.osspkg.com/xc v0.3.1
-	golang.org/x/sys v0.28.0
+	go.osspkg.com/xc v0.4.0
+	golang.org/x/sys v0.29.0
 )
 
 require (
