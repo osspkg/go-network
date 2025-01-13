@@ -7,7 +7,7 @@ require (
 	go.osspkg.com/algorithms v1.4.1
 	go.osspkg.com/do v0.1.3
 	go.osspkg.com/errors v0.3.1
-	go.osspkg.com/ioutils v0.4.8
+	go.osspkg.com/ioutils v0.5.0
 	go.osspkg.com/logx v0.4.2
 	go.osspkg.com/syncing v0.3.0
 	go.osspkg.com/xc v0.4.0
