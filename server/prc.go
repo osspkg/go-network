@@ -1,15 +1,15 @@
 /*
- *  Copyright (c) 2024 Mikhail Knyazhev <markus621@yandex.ru>. All rights reserved.
+ *  Copyright (c) 2024-2025 Mikhail Knyazhev <markus621@yandex.ru>. All rights reserved.
  *  Use of this source code is governed by a BSD 3-Clause license that can be found in the LICENSE file.
  */
 
 package server
 
 import (
-	"bytes"
 	"context"
 	"net"
 
+	"go.osspkg.com/ioutils/data"
 	"go.osspkg.com/ioutils/pool"
 )
 
@@ -24,8 +24,8 @@ type (
 
 	prc struct {
 		conn tPRConn
-		rb   *bytes.Buffer
-		wb   *bytes.Buffer
+		rb   *data.Buffer
+		wb   *data.Buffer
 		ctx  context.Context
 		addr net.Addr
 	}
@@ -33,8 +33,8 @@ type (
 
 func newPRC() *prc {
 	return &prc{
-		rb: bytes.NewBuffer(make([]byte, 0, 512)),
-		wb: bytes.NewBuffer(make([]byte, 0, 512)),
+		rb: data.NewBuffer(512),
+		wb: data.NewBuffer(512),
 	}
 }
 

@@ -1,5 +1,5 @@
 /*
- *  Copyright (c) 2024 Mikhail Knyazhev <markus621@yandex.ru>. All rights reserved.
+ *  Copyright (c) 2024-2025 Mikhail Knyazhev <markus621@yandex.ru>. All rights reserved.
  *  Use of this source code is governed by a BSD 3-Clause license that can be found in the LICENSE file.
  */
 
@@ -17,34 +17,41 @@ import (
 	"github.com/quic-go/quic-go"
 	"go.osspkg.com/errors"
 	"go.osspkg.com/ioutils/fs"
+	"go.osspkg.com/syncing"
+	"go.osspkg.com/xc"
+
 	"go.osspkg.com/network/address"
 	"go.osspkg.com/network/internal"
 	"go.osspkg.com/network/listen"
-	"go.osspkg.com/syncing"
-	"go.osspkg.com/xc"
 )
 
 type (
 	TServer interface {
-		HandleFunc(h Handler)
+		HelloFunc(func(ctx Ctx))
+		HandleFunc(func(ctx Ctx))
 		ListenAndServe(ctx xc.Context) error
 	}
 
 	Config struct {
-		Address    string               `yaml:"address"`
-		Network    string               `yaml:"network"`
+		Address    string        `yaml:"address"`
+		Network    string        `yaml:"network"`
+		Timeout    time.Duration `yaml:"timeout,omitempty"`
+		KeepAlive  time.Duration `yaml:"keep_alive,omitempty"`
+		BufferSize int           `yaml:"buffer_size,omitempty"`
+		SSL        *SSL          `yaml:"ssl,omitempty"`
+	}
+	SSL struct {
 		Certs      []listen.Certificate `yaml:"certs,omitempty"`
-		Timeout    time.Duration        `yaml:"timeout,omitempty"`
-		KeepAlive  time.Duration        `yaml:"keep_alive,omitempty"`
-		BufferSize int                  `yaml:"buffer_size,omitempty"`
+		NextProtos []string             `yaml:"next_protos,omitempty"`
 	}
 
 	_server struct {
-		conf     Config
-		listener io.Closer
-		handler  Handler
-		sync     syncing.Switch
-		wg       syncing.Group
+		conf        Config
+		listener    io.Closer
+		helloFunc   func(ctx Ctx)
+		handlerFunc func(ctx Ctx)
+		sync        syncing.Switch
+		wg          syncing.Group
 	}
 )
 
@@ -56,11 +63,18 @@ func New(conf Config) TServer {
 	}
 }
 
-func (v *_server) HandleFunc(h Handler) {
+func (v *_server) HandleFunc(fn func(ctx Ctx)) {
 	if v.sync.IsOn() {
 		return
 	}
-	v.handler = h
+	v.handlerFunc = fn
+}
+
+func (v *_server) HelloFunc(fn func(ctx Ctx)) {
+	if v.sync.IsOn() {
+		return
+	}
+	v.helloFunc = fn
 }
 
 func (v *_server) ListenAndServe(ctx xc.Context) error {
@@ -68,7 +82,7 @@ func (v *_server) ListenAndServe(ctx xc.Context) error {
 		ctx.Close()
 	}()
 
-	if v.handler == nil {
+	if v.handlerFunc == nil {
 		return fmt.Errorf("handler not found")
 	}
 	if !v.sync.On() {
@@ -119,7 +133,13 @@ func (v *_server) build(ctx context.Context) error {
 	v.conf.KeepAlive = internal.NotZeroDuration(v.conf.KeepAlive, 15*time.Second)
 	v.conf.BufferSize = internal.NotZero[int](v.conf.BufferSize, 65535)
 
-	l, err := listen.New(ctx, v.conf.Network, v.conf.Address, v.conf.Certs...)
+	ssl := &listen.SSL{}
+	if v.conf.SSL != nil {
+		ssl.Certs = append(ssl.Certs, v.conf.SSL.Certs...)
+		ssl.NextProtos = append(ssl.NextProtos, v.conf.SSL.NextProtos...)
+	}
+
+	l, err := listen.New(ctx, v.conf.Network, v.conf.Address, ssl)
 	if err != nil {
 		return err
 	}
@@ -176,7 +196,7 @@ func (v *_server) handlingPacketConn(ctx context.Context, l net.PacketConn) erro
 				defer poolPRC.Put(cp)
 			}()
 
-			v.handler.Handler(cp)
+			v.handlerFunc(cp)
 
 			if _, e := cp.Release(); e != nil {
 				internal.WriteErrLog("PacketConn: write message", e, addr)
@@ -213,7 +233,7 @@ func (v *_server) handlingConn(ctx context.Context, l net.Listener) error {
 
 		if tc, ok := conn.(*tls.Conn); ok {
 			if err = tc.HandshakeContext(ctx); err != nil {
-				internal.WriteErrLog("Conn: handshake", err, addr)
+				internal.WriteErrLog("conn: handshake", err, addr)
 				conn.Close() //nolint: errcheck
 				continue
 			}
@@ -223,7 +243,7 @@ func (v *_server) handlingConn(ctx context.Context, l net.Listener) error {
 			bgCtx, bgCancel := context.WithCancel(ctx)
 			defer func() {
 				if e := recover(); e != nil {
-					internal.WriteErrLog("Conn: panic", fmt.Errorf("%+v", e), addr)
+					internal.WriteErrLog("conn: panic", fmt.Errorf("%+v", e), addr)
 				}
 				conn.Close() //nolint: errcheck
 				bgCancel()
@@ -234,26 +254,36 @@ func (v *_server) handlingConn(ctx context.Context, l net.Listener) error {
 
 			cp.Setup(bgCtx, v.conf.BufferSize, conn, addr)
 
+			if v.helloFunc != nil {
+				v.helloFunc(cp)
+
+				if e := cp.Release(); e != nil {
+					internal.WriteErrLog("conn: write message", e, addr)
+					return
+				}
+			}
+
 			for {
+
 				if e := internal.Deadline(conn, v.conf.KeepAlive); e != nil {
-					internal.WriteErrLog("Conn: update keepalive", e, addr)
+					internal.WriteErrLog("conn: update keepalive", e, addr)
 					return
 				}
 
 				if e := cp.Pickup(); e != nil {
-					internal.WriteErrLog("Conn: read message", e, addr)
+					internal.WriteErrLog("conn: read message", e, addr)
 					return
 				}
 
 				if e := internal.Deadline(conn, v.conf.Timeout); e != nil {
-					internal.WriteErrLog("Conn: update timeout", e, addr)
+					internal.WriteErrLog("conn: update timeout", e, addr)
 					return
 				}
 
-				v.handler.Handler(cp)
+				v.handlerFunc(cp)
 
 				if e := cp.Release(); e != nil {
-					internal.WriteErrLog("Conn: write message", e, addr)
+					internal.WriteErrLog("conn: write message", e, addr)
 					return
 				}
 			}
@@ -308,7 +338,17 @@ func (v *_server) handlingQUIC(ctx context.Context, l *quic.Listener) error {
 
 			cp.Setup(bgCtx, v.conf.BufferSize, stream, addr)
 
+			if v.helloFunc != nil {
+				v.helloFunc(cp)
+
+				if e = cp.Release(); e != nil {
+					internal.WriteErrLog("QUIC: write message", e, addr)
+					return
+				}
+			}
+
 			for {
+
 				if e = internal.Deadline(stream, v.conf.KeepAlive); e != nil {
 					internal.WriteErrLog("QUIC: update keepalive", e, addr)
 					return
@@ -324,7 +364,7 @@ func (v *_server) handlingQUIC(ctx context.Context, l *quic.Listener) error {
 					return
 				}
 
-				v.handler.Handler(cp)
+				v.handlerFunc(cp)
 
 				if e = cp.Release(); e != nil {
 					internal.WriteErrLog("QUIC: write message", e, addr)

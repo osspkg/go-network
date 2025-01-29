@@ -1,34 +1,32 @@
+SHELL=/bin/bash
+
 
 .PHONY: install
 install:
-	go install github.com/osspkg/devtool@latest
-
-.PHONY: setup
-setup:
-	devtool setup-lib
+	go install go.osspkg.com/goppy/v2/cmd/goppy@latest
+	goppy setup-lib
 
 .PHONY: lint
 lint:
-	devtool lint
+	goppy lint
 
 .PHONY: license
 license:
-	devtool license
+	goppy license
 
 .PHONY: build
 build:
-	devtool build --arch=amd64
+	goppy build --arch=amd64
 
 .PHONY: tests
 tests:
-	devtool test
+	goppy test
 
-.PHONY: pre-commite
-pre-commite: setup lint build tests
+.PHONY: pre-commit
+pre-commit: install license lint tests build
 
 .PHONY: ci
-ci: install setup lint build tests
-
+ci: pre-commit
 
 run_example_client_tcp:
 	ADDRESS="127.0.0.1:8888" NETWORK="tcp" go run -race examples/client/main.go
@@ -52,3 +50,7 @@ run_example_server_quic:
 
 run_example_server_epoll:
 	go run -race examples/epoll-server/main.go
+
+run_example_revers_proxy:
+	go run -race examples/reversproxy/main.go
+	#curl -vvv -k imaps://localhost:10993 -X 'dddd'

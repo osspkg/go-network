@@ -1,11 +1,12 @@
 /*
- *  Copyright (c) 2024 Mikhail Knyazhev <markus621@yandex.ru>. All rights reserved.
+ *  Copyright (c) 2024-2025 Mikhail Knyazhev <markus621@yandex.ru>. All rights reserved.
  *  Use of this source code is governed by a BSD 3-Clause license that can be found in the LICENSE file.
  */
 
 package client
 
 import (
+	"bufio"
 	"context"
 	"crypto/tls"
 	"fmt"
@@ -18,6 +19,7 @@ import (
 	"go.osspkg.com/algorithms/control"
 	"go.osspkg.com/errors"
 	"go.osspkg.com/ioutils"
+
 	"go.osspkg.com/network/internal"
 )
 
@@ -34,7 +36,7 @@ type Client struct {
 
 	err    error
 	config *tls.Config
-	pool   *chanPool[*connect]
+	pool   *connPool
 	sem    control.Semaphore
 	once   sync.Once
 }
@@ -83,14 +85,16 @@ func (v *Client) setup() error {
 		v.Address = addr.String()
 		v.sem = control.NewSemaphore(uint64(v.MaxIdleConns))
 
-		v.pool = newChanPool[*connect](v.MaxIdleConns, func() *connect {
-			pIdleAt := time.Now().Add(v.KeepAlive)
-			pconn, pclose, perr := v.dialConnect(context.Background())
+		v.pool = newConnPool(v.MaxIdleConns, func() *connect {
+			pConn, pClose, pErr := v.dialConnect(context.Background())
 			return &connect{
-				Conn:      pconn,
-				CloseFunc: pclose,
-				Err:       perr,
-				IdleAt:    pIdleAt,
+				conn:       pConn,
+				closeFunc:  pClose,
+				err:        pErr,
+				idleAt:     time.Now().Add(v.KeepAlive),
+				keepAlive:  v.KeepAlive,
+				timeOut:    v.Timeout,
+				bufferSize: v.BufferSize,
 			}
 		})
 	})
@@ -118,6 +122,13 @@ func (v *Client) applyTLSCertificate() error {
 	if len(cert.Certificate) >= 0 {
 		v.config.Certificates = append(v.config.Certificates, cert)
 	}
+
+	host, _, err := net.SplitHostPort(v.Address)
+	if err != nil {
+		return err
+	}
+	v.config.ServerName = host
+
 	v.config.InsecureSkipVerify = v.Certificate.InsecureSkipVerify
 
 	return nil
@@ -147,10 +158,12 @@ func (v *Client) dialConnect(ctx context.Context) (action, func(), error) {
 			NetDialer: new(net.Dialer),
 			Config:    v.config,
 		}
+
 		conn, err := dial.DialContext(ctx, v.Network, v.Address)
 		if err != nil {
 			return nil, nil, fmt.Errorf("create connect: %w", err)
 		}
+
 		return conn, func() {
 			writeLog(conn.Close(), "close connect", v.Network, v.Address)
 		}, nil
@@ -161,9 +174,34 @@ func (v *Client) dialConnect(ctx context.Context) (action, func(), error) {
 	if err != nil {
 		return nil, nil, fmt.Errorf("create connect: %w", err)
 	}
+
 	return conn, func() {
 		writeLog(conn.Close(), "close connect", v.Network, v.Address)
 	}, nil
+}
+
+func (v *Client) Call(call func(p Pipe) error) (err error) {
+	if err = v.setup(); err != nil {
+		return
+	}
+
+	v.sem.Acquire()
+	defer func() { v.sem.Release() }()
+
+	conn := v.pool.Get()
+
+	if err = conn.GetError(); err != nil {
+		return
+	}
+
+	defer func() {
+		conn.err = errors.Wrap(conn.err, err)
+		v.pool.Put(conn)
+	}()
+
+	err = call(conn)
+
+	return
 }
 
 func (v *Client) Do(in io.Reader, out io.Writer) (err error) {
@@ -174,16 +212,19 @@ func (v *Client) Do(in io.Reader, out io.Writer) (err error) {
 	v.sem.Acquire()
 	defer func() { v.sem.Release() }()
 
-	conn := v.pool.GetIdleOrCreateConn()
+	conn := v.pool.Get()
 
 	if err = conn.GetError(); err != nil {
 		return
 	}
 
 	defer func() {
-		conn.Err = errors.Wrap(conn.Err, err)
-		v.pool.PutOrCloseIdleConn(conn)
+		conn.err = errors.Wrap(conn.err, err)
+		v.pool.Put(conn)
 	}()
+
+	r := bufio.NewReader(conn.conn)
+	w := bufio.NewWriter(conn.conn)
 
 	errC := make(chan error, 1)
 	startC := make(chan struct{})
@@ -191,18 +232,20 @@ func (v *Client) Do(in io.Reader, out io.Writer) (err error) {
 	go func() {
 		close(startC)
 
-		if e := internal.Deadline(conn.Conn, v.Timeout*2); e != nil {
+		if e := internal.Deadline(conn.conn, v.Timeout*2); e != nil {
 			errC <- fmt.Errorf("update deadline: %w", e)
 			return
 		}
 
-		n, e := ioutils.CopyPack(out, conn.Conn, v.BufferSize)
-		if e != nil {
-			errC <- fmt.Errorf("read message: %w", e)
-			return
-		} else if n == 0 {
-			errC <- fmt.Errorf("read message: got 0 bytes")
-			return
+		if out != nil {
+			n, e := ioutils.CopyN(out, r, v.BufferSize)
+			if e != nil {
+				errC <- fmt.Errorf("read message: %w", e)
+				return
+			} else if n == 0 {
+				errC <- fmt.Errorf("read message: got 0 bytes")
+				return
+			}
 		}
 
 		errC <- nil
@@ -210,20 +253,22 @@ func (v *Client) Do(in io.Reader, out io.Writer) (err error) {
 
 	<-startC
 
-	n, e := ioutils.CopyPack(conn.Conn, in, v.BufferSize)
-	if e != nil {
-		err = fmt.Errorf("write message: %w", e)
-		return
-	} else if n == 0 {
-		err = fmt.Errorf("write message: set 0 bytes")
-		return
+	if in != nil {
+		n, e := ioutils.CopyN(w, in, v.BufferSize)
+		if e != nil {
+			err = fmt.Errorf("write message: %w", e)
+			return
+		} else if n == 0 {
+			err = fmt.Errorf("write message: set 0 bytes")
+			return
+		}
 	}
 
 	if err = <-errC; err != nil {
 		return
 	}
 
-	if err = conn.Conn.SetWriteDeadline(time.Now().Add(v.KeepAlive)); err != nil {
+	if err = conn.conn.SetWriteDeadline(time.Now().Add(v.KeepAlive)); err != nil {
 		err = fmt.Errorf("update deadline: %w", err)
 		return
 	}

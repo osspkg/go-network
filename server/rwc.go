@@ -1,17 +1,17 @@
 /*
- *  Copyright (c) 2024 Mikhail Knyazhev <markus621@yandex.ru>. All rights reserved.
+ *  Copyright (c) 2024-2025 Mikhail Knyazhev <markus621@yandex.ru>. All rights reserved.
  *  Use of this source code is governed by a BSD 3-Clause license that can be found in the LICENSE file.
  */
 
 package server
 
 import (
-	"bytes"
 	"context"
 	"io"
 	"net"
 
 	"go.osspkg.com/ioutils"
+	"go.osspkg.com/ioutils/data"
 	"go.osspkg.com/ioutils/pool"
 )
 
@@ -26,8 +26,8 @@ type (
 
 	rwc struct {
 		conn  tRWConn
-		rb    *bytes.Buffer
-		wb    *bytes.Buffer
+		rb    *data.Buffer
+		wb    *data.Buffer
 		bsize int
 		ctx   context.Context
 		addr  net.Addr
@@ -36,8 +36,8 @@ type (
 
 func newRWC() *rwc {
 	return &rwc{
-		rb: bytes.NewBuffer(make([]byte, 0, 512)),
-		wb: bytes.NewBuffer(make([]byte, 0, 512)),
+		rb: data.NewBuffer(512),
+		wb: data.NewBuffer(512),
 	}
 }
 
@@ -58,7 +58,7 @@ func (v *rwc) Reset() {
 }
 
 func (v *rwc) Pickup() error {
-	n, err := ioutils.CopyPack(v.rb, v.conn, v.bsize)
+	n, err := ioutils.CopyN(v.rb, v.conn, v.bsize)
 	if err != nil {
 		return err
 	}
@@ -69,7 +69,7 @@ func (v *rwc) Pickup() error {
 }
 
 func (v *rwc) Release() error {
-	n, err := ioutils.CopyPack(v.conn, v.wb, v.bsize)
+	n, err := ioutils.CopyN(v.conn, v.wb, v.bsize)
 	if err != nil {
 		return err
 	}

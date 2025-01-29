@@ -1,5 +1,5 @@
 /*
- *  Copyright (c) 2024 Mikhail Knyazhev <markus621@yandex.ru>. All rights reserved.
+ *  Copyright (c) 2024-2025 Mikhail Knyazhev <markus621@yandex.ru>. All rights reserved.
  *  Use of this source code is governed by a BSD 3-Clause license that can be found in the LICENSE file.
  */
 
@@ -17,24 +17,16 @@ import (
 	"go.osspkg.com/network/internal"
 )
 
-func New(ctx context.Context, network, address string, certs ...Certificate) (io.Closer, error) {
-	switch network {
-	case internal.NetUDP, internal.NetUNIX:
-		if len(certs) > 0 {
-			return nil, fmt.Errorf("%s not support tls", network)
-		}
-	default:
-	}
-
+func New(ctx context.Context, network, address string, ssl *SSL) (io.Closer, error) {
 	switch network {
 	case internal.NetTCP:
-		return newListen(ctx, network, address, certs...)
+		return newListen(ctx, network, address, ssl)
 	case internal.NetUDP:
 		return newListenPacket(ctx, network, address)
 	case internal.NetUNIX:
-		return newListen(ctx, network, address)
+		return newListen(ctx, network, address, nil)
 	case internal.NetQUIC:
-		return newListenQUIC(ctx, address, certs...)
+		return newListenQUIC(ctx, address, ssl)
 	default:
 		return nil, fmt.Errorf("invalid network type, use: tcp, udp, unix")
 	}
@@ -45,32 +37,36 @@ func newListenPacket(ctx context.Context, network, address string) (net.PacketCo
 	return lc.ListenPacket(ctx, network, address)
 }
 
-func newListen(ctx context.Context, network, address string, certs ...Certificate) (l net.Listener, err error) {
+func newListen(ctx context.Context, network, address string, ssl *SSL) (l net.Listener, err error) {
 	var lc net.ListenConfig
 	if l, err = lc.Listen(ctx, network, address); err != nil {
 		return nil, err
 	}
 
-	if len(certs) == 0 {
+	if ssl == nil || len(ssl.Certs) == 0 {
 		return
 	}
 
 	var conf *tls.Config
-	if conf, err = NewTLSConfig(certs...); err != nil {
+	if conf, err = NewTLSConfig(ssl); err != nil {
 		return nil, err
 	}
 	return tls.NewListener(l, conf), nil
 }
 
-func newListenQUIC(_ context.Context, address string, certs ...Certificate) (l *quic.Listener, err error) {
-	if len(certs) == 0 {
+func newListenQUIC(_ context.Context, address string, ssl *SSL) (l *quic.Listener, err error) {
+	if ssl == nil || len(ssl.Certs) == 0 {
 		return nil, fmt.Errorf("QUIC cant work without tls")
 	}
+
+	if len(ssl.NextProtos) == 0 {
+		ssl.NextProtos = append(ssl.NextProtos, "quic")
+	}
+
 	var conf *tls.Config
-	if conf, err = NewTLSConfig(certs...); err != nil {
+	if conf, err = NewTLSConfig(ssl); err != nil {
 		return nil, err
 	}
 
-	conf.NextProtos = append(conf.NextProtos, "quic")
 	return quic.ListenAddr(address, conf, &quic.Config{EnableDatagrams: true})
 }
