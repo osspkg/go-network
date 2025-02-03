@@ -1,15 +1,14 @@
 module go.osspkg.com/network
 
 go 1.22.10
-
 require (
 	github.com/quic-go/quic-go v0.48.2
 	go.osspkg.com/algorithms v1.4.1
 	go.osspkg.com/do v0.1.3
 	go.osspkg.com/errors v0.3.1
-	go.osspkg.com/ioutils v0.4.8
+	go.osspkg.com/ioutils v0.5.1
 	go.osspkg.com/logx v0.4.2
-	go.osspkg.com/syncing v0.3.0
+	go.osspkg.com/syncing v0.3.1
 	go.osspkg.com/xc v0.4.0
 	golang.org/x/sys v0.29.0
 )
