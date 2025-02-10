@@ -11,7 +11,7 @@ require (
 	go.osspkg.com/logx v0.4.2
 	go.osspkg.com/syncing v0.3.0
 	go.osspkg.com/xc v0.4.0
-	golang.org/x/sys v0.29.0
+	golang.org/x/sys v0.30.0
 )
 
 require (
