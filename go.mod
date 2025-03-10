@@ -1,6 +1,7 @@
 module go.osspkg.com/network
 
 go 1.22.10
+toolchain go1.23.7
 
 require (
 	github.com/quic-go/quic-go v0.48.2
@@ -11,7 +12,7 @@ require (
 	go.osspkg.com/logx v0.4.2
 	go.osspkg.com/syncing v0.3.0
 	go.osspkg.com/xc v0.4.0
-	golang.org/x/sys v0.29.0
+	golang.org/x/sys v0.31.0
 )
 
 require (
