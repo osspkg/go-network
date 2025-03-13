@@ -1,6 +1,7 @@
 module go.osspkg.com/network
 
 go 1.22.10
+toolchain go1.23.7
 
 require (
 	github.com/quic-go/quic-go v0.48.2
@@ -11,7 +12,7 @@ require (
 	go.osspkg.com/logx v0.4.2
 	go.osspkg.com/syncing v0.3.0
 	go.osspkg.com/xc v0.4.0
-	golang.org/x/sys v0.29.0
+	golang.org/x/sys v0.30.0
 )
 
 require (
@@ -21,10 +22,10 @@ require (
 	github.com/mailru/easyjson v0.7.7 // indirect
 	github.com/onsi/ginkgo/v2 v2.22.0 // indirect
 	go.uber.org/mock v0.5.0 // indirect
-	golang.org/x/crypto v0.31.0 // indirect
+	golang.org/x/crypto v0.35.0 // indirect
 	golang.org/x/exp v0.0.0-20241210194714-1829a127f884 // indirect
 	golang.org/x/mod v0.22.0 // indirect
-	golang.org/x/net v0.32.0 // indirect
+	golang.org/x/net v0.36.0 // indirect
 	golang.org/x/sync v0.10.0 // indirect
 	golang.org/x/tools v0.28.0 // indirect
 )
