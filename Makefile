@@ -1,52 +1,50 @@
+SHELL=/bin/bash
+
 
 .PHONY: install
 install:
-	go install github.com/osspkg/devtool@latest
-
-.PHONY: setup
-setup:
-	devtool setup-lib
+	go install go.osspkg.com/goppy/v2/cmd/goppy@latest
+	goppy setup-lib
 
 .PHONY: lint
 lint:
-	devtool lint
+	goppy lint
 
 .PHONY: license
 license:
-	devtool license
+	goppy license
 
 .PHONY: build
 build:
-	devtool build --arch=amd64
+	goppy build --arch=amd64
 
 .PHONY: tests
 tests:
-	devtool test
+	goppy test
 
-.PHONY: pre-commite
-pre-commite: setup lint build tests
+.PHONY: pre-commit
+pre-commit: install license lint tests build
 
 .PHONY: ci
-ci: install setup lint build tests
-
+ci: pre-commit
 
 run_example_client_tcp:
-	ADDRESS="127.0.0.1:8888" NETWORK="tcp" go run -race examples/client/main.go
+	time ADDRESS="127.0.0.1:8888" NETWORK="tcp" go run -race examples/client/main.go
 run_example_server_tcp:
 	ADDRESS="127.0.0.1:8888" NETWORK="tcp" go run -race examples/server/main.go
 
 run_example_client_udp:
-	ADDRESS="127.0.0.1:8888" NETWORK="udp" go run -race examples/client/main.go
+	time ADDRESS="127.0.0.1:8888" NETWORK="udp" go run -race examples/client/main.go
 run_example_server_udp:
 	ADDRESS="127.0.0.1:8888" NETWORK="udp" go run -race examples/server/main.go
 
 run_example_client_unix:
-	ADDRESS="/tmp/unix.sock" NETWORK="unix" go run -race examples/client/main.go
+	time ADDRESS="/tmp/unix.sock" NETWORK="unix" go run -race examples/client/main.go
 run_example_server_unix:
 	ADDRESS="/tmp/unix.sock" NETWORK="unix" go run -race examples/server/main.go
 
 run_example_client_quic:
-	ADDRESS="127.0.0.1:8888" NETWORK="quic" go run -race examples/client/main.go
+	time ADDRESS="127.0.0.1:8888" NETWORK="quic" go run -race examples/client/main.go
 run_example_server_quic:
 	ADDRESS="127.0.0.1:8888" NETWORK="quic" go run -race examples/server/main.go
 

@@ -3,15 +3,13 @@
  *  Use of this source code is governed by a BSD 3-Clause license that can be found in the LICENSE file.
  */
 
-package fd
+package internal
 
 import (
-	"net"
-	"reflect"
+	"go.osspkg.com/ioutils/data"
+	"go.osspkg.com/ioutils/pool"
 )
 
-func ByConnect(c net.Conn) int64 {
-	fd := reflect.Indirect(reflect.ValueOf(c)).FieldByName("fd")
-	pfd := reflect.Indirect(fd).FieldByName("pfd")
-	return pfd.FieldByName("Sysfd").Int()
-}
+var DataPool = pool.New[*data.Buffer](func() *data.Buffer {
+	return data.NewBuffer(512)
+})

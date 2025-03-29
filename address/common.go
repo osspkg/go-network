@@ -1,5 +1,5 @@
 /*
- *  Copyright (c) 2024 Mikhail Knyazhev <markus621@yandex.ru>. All rights reserved.
+ *  Copyright (c) 2024-2025 Mikhail Knyazhev <markus621@yandex.ru>. All rights reserved.
  *  Use of this source code is governed by a BSD 3-Clause license that can be found in the LICENSE file.
  */
 
@@ -17,48 +17,97 @@ var (
 )
 
 func RandomPort(host string) (string, error) {
-	host = strings.Join([]string{host, "0"}, ":")
-	addr, err := net.ResolveTCPAddr("tcp", host)
+	network := "tcp4"
+	if strings.Contains(host, ":") {
+		network = "tcp6"
+	}
+
+	host = net.JoinHostPort(host, "0")
+	addr, err := net.ResolveTCPAddr(network, host)
 	if err != nil {
 		return host, errors.Wrap(err, ErrResolveTCPAddress)
 	}
-	l, err := net.ListenTCP("tcp", addr)
+
+	l, err := net.ListenTCP(network, addr)
 	if err != nil {
 		return host, errors.Wrap(err, ErrResolveTCPAddress)
 	}
+
 	v := l.Addr().String()
+
 	if err = l.Close(); err != nil {
 		return host, errors.Wrap(err, ErrResolveTCPAddress)
 	}
+
 	return v, nil
 }
 
-func CheckHostPort(addr string) string {
-	hp := strings.Split(addr, ":")
-	if len(hp) != 2 {
-		tmp := make([]string, 2)
-		for i, s := range hp {
-			if i > 1 {
-				break
+func ResolveIPPort(address string) string {
+	var (
+		host string
+		port string
+	)
+
+	switch true {
+	case len(address) == 0:
+		host = "127.0.0.1"
+
+	case IsValidIP(address):
+		host = address
+
+	case address[0] == '[':
+		if index := strings.IndexByte(address, ']'); index != -1 {
+			host = address[1:index]
+			port = address[index+1:]
+			if len(port) > 1 && port[0] == ':' {
+				port = port[1:]
 			}
-			tmp[i] = s
 		}
-		hp = tmp
+		if !IsValidIP(host) {
+			host = "::1"
+		}
+
+	case strings.Count(address, ":") > 1:
+		host = address
+		if !IsValidIP(host) {
+			host = "::1"
+		}
+
+	case strings.Count(address, ":") == 1:
+		index := strings.IndexByte(address, ':')
+		host = address[0:index]
+		port = address[index+1:]
+		if len(port) > 1 && port[0] == ':' {
+			port = port[1:]
+		}
+
+	default:
+		host = address
 	}
-	if len(hp[0]) == 0 {
-		hp[0] = "0.0.0.0"
+
+	if strings.Contains(host, "/") {
+		return host
 	}
-	if len(hp[1]) == 0 {
-		if v, err := RandomPort(hp[0]); err == nil {
+
+	if len(host) == 0 {
+		host = "0.0.0.0"
+	}
+
+	if ips, err := net.LookupIP(host); err == nil && len(ips) > 0 {
+		host = ips[0].String()
+	}
+
+	if len(port) == 0 || port == ":" {
+		if v, err := RandomPort(host); err == nil {
 			return v
-		} else {
-			hp[1] = "80"
 		}
+		port = "8080"
 	}
-	return strings.Join(hp, ":")
+
+	return net.JoinHostPort(host, port)
 }
 
-func Normalize(defaultPort string, ips ...string) []string {
+func FixIPPort(defaultPort string, ips ...string) []string {
 	result := make([]string, 0, len(ips))
 	for _, ip := range ips {
 		host, port, err := net.SplitHostPort(ip)
@@ -66,12 +115,15 @@ func Normalize(defaultPort string, ips ...string) []string {
 			host = ip
 			port = defaultPort
 		}
+
 		if !IsValidIP(host) {
 			continue
 		}
+
 		if port == "0" {
 			port = defaultPort
 		}
+
 		result = append(result, net.JoinHostPort(host, port))
 	}
 

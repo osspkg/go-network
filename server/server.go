@@ -1,5 +1,5 @@
 /*
- *  Copyright (c) 2024 Mikhail Knyazhev <markus621@yandex.ru>. All rights reserved.
+ *  Copyright (c) 2024-2025 Mikhail Knyazhev <markus621@yandex.ru>. All rights reserved.
  *  Use of this source code is governed by a BSD 3-Clause license that can be found in the LICENSE file.
  */
 
@@ -12,43 +12,33 @@ import (
 	"io"
 	"net"
 	"os"
-	"time"
 
 	"github.com/quic-go/quic-go"
 	"go.osspkg.com/errors"
 	"go.osspkg.com/ioutils/fs"
+	"go.osspkg.com/syncing"
+
 	"go.osspkg.com/network/address"
 	"go.osspkg.com/network/internal"
 	"go.osspkg.com/network/listen"
-	"go.osspkg.com/syncing"
-	"go.osspkg.com/xc"
 )
 
 type (
-	TServer interface {
-		HandleFunc(h Handler)
-		ListenAndServe(ctx xc.Context) error
-	}
-
-	Config struct {
-		Address    string               `yaml:"address"`
-		Network    string               `yaml:"network"`
-		Certs      []listen.Certificate `yaml:"certs,omitempty"`
-		Timeout    time.Duration        `yaml:"timeout,omitempty"`
-		KeepAlive  time.Duration        `yaml:"keep_alive,omitempty"`
-		BufferSize int                  `yaml:"buffer_size,omitempty"`
+	Server interface {
+		HandleFunc(func(ctx context.Context, w io.Writer, r io.Reader, addr net.Addr))
+		ListenAndServe(ctx context.Context) error
 	}
 
 	_server struct {
-		conf     Config
-		listener io.Closer
-		handler  Handler
-		sync     syncing.Switch
-		wg       syncing.Group
+		conf        Config
+		listener    io.Closer
+		handlerFunc func(ctx context.Context, w io.Writer, r io.Reader, addr net.Addr)
+		sync        syncing.Switch
+		wg          syncing.Group
 	}
 )
 
-func New(conf Config) TServer {
+func New(conf Config) Server {
 	return &_server{
 		conf: conf,
 		sync: syncing.NewSwitch(),
@@ -56,37 +46,33 @@ func New(conf Config) TServer {
 	}
 }
 
-func (v *_server) HandleFunc(h Handler) {
+func (v *_server) HandleFunc(fn func(context.Context, io.Writer, io.Reader, net.Addr)) {
 	if v.sync.IsOn() {
 		return
 	}
-	v.handler = h
+	v.handlerFunc = fn
 }
 
-func (v *_server) ListenAndServe(ctx xc.Context) error {
-	defer func() {
-		ctx.Close()
-	}()
-
-	if v.handler == nil {
+func (v *_server) ListenAndServe(ctx context.Context) error {
+	if v.handlerFunc == nil {
 		return fmt.Errorf("handler not found")
 	}
 	if !v.sync.On() {
 		return internal.ErrServAlreadyRunning
 	}
 
-	if err := v.build(ctx.Context()); err != nil {
+	if err := v.build(ctx); err != nil {
 		return err
 	}
 
 	if l, ok := v.listener.(*quic.Listener); ok {
-		return v.handlingQUIC(ctx.Context(), l)
+		return v.handlingQUIC(ctx, l)
 	}
 	if l, ok := v.listener.(net.Listener); ok {
-		return v.handlingConn(ctx.Context(), l)
+		return v.handlingConn(ctx, l)
 	}
 	if l, ok := v.listener.(net.PacketConn); ok {
-		return v.handlingPacketConn(ctx.Context(), l)
+		return v.handlingPacketConn(ctx, l)
 	}
 
 	return fmt.Errorf("unknown listener")
@@ -102,11 +88,11 @@ func (v *_server) close() {
 func (v *_server) build(ctx context.Context) error {
 	switch v.conf.Network {
 	case internal.NetTCP:
-		v.conf.Address = address.CheckHostPort(v.conf.Address)
+		v.conf.Address = address.ResolveIPPort(v.conf.Address)
 	case internal.NetUDP:
-		v.conf.Address = address.CheckHostPort(v.conf.Address)
+		v.conf.Address = address.ResolveIPPort(v.conf.Address)
 	case internal.NetQUIC:
-		v.conf.Address = address.CheckHostPort(v.conf.Address)
+		v.conf.Address = address.ResolveIPPort(v.conf.Address)
 	case internal.NetUNIX:
 		if fs.FileExist(v.conf.Address) {
 			if err := os.Remove(v.conf.Address); err != nil {
@@ -115,11 +101,13 @@ func (v *_server) build(ctx context.Context) error {
 		}
 	}
 
-	v.conf.Timeout = internal.NotZeroDuration(v.conf.Timeout, 1*time.Second)
-	v.conf.KeepAlive = internal.NotZeroDuration(v.conf.KeepAlive, 15*time.Second)
-	v.conf.BufferSize = internal.NotZero[int](v.conf.BufferSize, 65535)
+	ssl := &listen.SSL{}
+	if v.conf.SSL != nil {
+		ssl.Certs = append(ssl.Certs, v.conf.SSL.Certs...)
+		ssl.NextProtos = append(ssl.NextProtos, v.conf.SSL.NextProtos...)
+	}
 
-	l, err := listen.New(ctx, v.conf.Network, v.conf.Address, v.conf.Certs...)
+	l, err := listen.New(ctx, v.conf.Network, v.conf.Address, ssl)
 	if err != nil {
 		return err
 	}
@@ -130,7 +118,11 @@ func (v *_server) build(ctx context.Context) error {
 
 func (v *_server) handlingPacketConn(ctx context.Context, l net.PacketConn) error {
 	ctx, cancel := context.WithCancel(ctx)
+
+	stop := internal.DeadlineUpdate(l)
+
 	defer func() {
+		stop()
 		cancel()
 		v.wg.Wait()
 	}()
@@ -140,7 +132,7 @@ func (v *_server) handlingPacketConn(ctx context.Context, l net.PacketConn) erro
 		v.close()
 	})
 
-	buff := make([]byte, v.conf.BufferSize)
+	buff := make([]byte, internal.UDPPacketSize)
 
 	for {
 		select {
@@ -151,46 +143,39 @@ func (v *_server) handlingPacketConn(ctx context.Context, l net.PacketConn) erro
 
 		n, addr, err := l.ReadFrom(buff)
 		if err != nil {
-			internal.WriteErrLog("PacketConn: read message", err, addr)
+			internal.Log("PacketConn: read message", err, addr)
 			return err
 		}
-		if n == 0 {
-			internal.WriteErrLog("PacketConn: read message", fmt.Errorf("empty request"), addr)
-			continue
-		}
 
-		cp := poolPRC.Get()
-		cp.Setup(ctx, l, addr)
+		req := internal.DataPool.Get()
 
-		if _, err = cp.Pickup(buff[:n]); err != nil {
-			poolPRC.Put(cp)
-			internal.WriteErrLog("PacketConn: read message", err, addr)
-			continue
+		if _, err = req.Write(buff[:n]); err != nil {
+			internal.Log("PacketConn: read message", err, addr)
+			return err
 		}
 
 		v.wg.Background(func() {
 			defer func() {
 				if e := recover(); e != nil {
-					internal.WriteErrLog("PacketConn: panic", fmt.Errorf("%+v", e), addr)
+					internal.Log("PacketConn: panic", fmt.Errorf("%+v", e), addr)
 				}
-				defer poolPRC.Put(cp)
+
+				internal.DataPool.Put(req)
 			}()
 
-			v.handler.Handler(cp)
-
-			if _, e := cp.Release(); e != nil {
-				internal.WriteErrLog("PacketConn: write message", e, addr)
-			}
+			v.handlerFunc(ctx, &internal.PacketWrite{Addr: addr, Conn: l}, req, addr)
 		})
 	}
 }
 
 func (v *_server) handlingConn(ctx context.Context, l net.Listener) error {
 	ctx, cancel := context.WithCancel(ctx)
+
 	v.wg.Background(func() {
 		<-ctx.Done()
 		v.close()
 	})
+
 	defer func() {
 		cancel()
 		v.wg.Wait()
@@ -205,7 +190,7 @@ func (v *_server) handlingConn(ctx context.Context, l net.Listener) error {
 
 		conn, err := l.Accept()
 		if err != nil {
-			cancel()
+			internal.Log("Conn: accept", err, nil)
 			return err
 		}
 
@@ -213,60 +198,38 @@ func (v *_server) handlingConn(ctx context.Context, l net.Listener) error {
 
 		if tc, ok := conn.(*tls.Conn); ok {
 			if err = tc.HandshakeContext(ctx); err != nil {
-				internal.WriteErrLog("Conn: handshake", err, addr)
-				conn.Close() //nolint: errcheck
+				internal.Log("Conn: handshake", err, addr)
+				internal.Log("Conn: close", conn.Close(), addr)
 				continue
 			}
 		}
 
 		v.wg.Background(func() {
-			bgCtx, bgCancel := context.WithCancel(ctx)
+			stop := internal.DeadlineUpdate(conn)
+
 			defer func() {
 				if e := recover(); e != nil {
-					internal.WriteErrLog("Conn: panic", fmt.Errorf("%+v", e), addr)
+					internal.Log("Conn: panic", fmt.Errorf("%+v", e), addr)
 				}
-				conn.Close() //nolint: errcheck
-				bgCancel()
+
+				stop()
+
+				internal.Log("Conn: close", conn.Close(), addr)
 			}()
 
-			cp := poolRWC.Get()
-			defer poolRWC.Put(cp)
-
-			cp.Setup(bgCtx, v.conf.BufferSize, conn, addr)
-
-			for {
-				if e := internal.Deadline(conn, v.conf.KeepAlive); e != nil {
-					internal.WriteErrLog("Conn: update keepalive", e, addr)
-					return
-				}
-
-				if e := cp.Pickup(); e != nil {
-					internal.WriteErrLog("Conn: read message", e, addr)
-					return
-				}
-
-				if e := internal.Deadline(conn, v.conf.Timeout); e != nil {
-					internal.WriteErrLog("Conn: update timeout", e, addr)
-					return
-				}
-
-				v.handler.Handler(cp)
-
-				if e := cp.Release(); e != nil {
-					internal.WriteErrLog("Conn: write message", e, addr)
-					return
-				}
-			}
+			v.handlerFunc(ctx, conn, conn, addr)
 		})
 	}
 }
 
 func (v *_server) handlingQUIC(ctx context.Context, l *quic.Listener) error {
 	ctx, cancel := context.WithCancel(ctx)
+
 	v.wg.Background(func() {
 		<-ctx.Done()
 		v.close()
 	})
+
 	defer func() {
 		cancel()
 		v.wg.Wait()
@@ -281,56 +244,35 @@ func (v *_server) handlingQUIC(ctx context.Context, l *quic.Listener) error {
 
 		conn, err := l.Accept(ctx)
 		if err != nil {
-			cancel()
+			internal.Log("QUIC: accept", err, nil)
 			return err
 		}
 
 		addr := conn.RemoteAddr()
 
 		v.wg.Background(func() {
-			bgCtx, bgCancel := context.WithCancel(ctx)
 			defer func() {
 				if e := recover(); e != nil {
-					internal.WriteErrLog("QUIC: panic", fmt.Errorf("%+v", e), addr)
+					internal.Log("QUIC: panic", fmt.Errorf("%+v", e), addr)
 				}
-				bgCancel()
+
+				//internal.Log("QUIC: close conn", conn.CloseWithError(0, ""), addr)
 			}()
 
-			stream, e := conn.AcceptStream(bgCtx)
+			stream, e := conn.AcceptStream(ctx)
 			if e != nil {
-				internal.WriteErrLog("QUIC: read message", e, addr)
+				internal.Log("QUIC: read message", e, addr)
 				return
 			}
-			defer stream.Close() //nolint: errcheck
 
-			cp := poolRWC.Get()
-			defer poolRWC.Put(cp)
+			stop := internal.DeadlineUpdate(stream)
 
-			cp.Setup(bgCtx, v.conf.BufferSize, stream, addr)
+			defer func() {
+				stop()
+				internal.Log("QUIC: close stream", stream.Close(), addr)
+			}()
 
-			for {
-				if e = internal.Deadline(stream, v.conf.KeepAlive); e != nil {
-					internal.WriteErrLog("QUIC: update keepalive", e, addr)
-					return
-				}
-
-				if e = cp.Pickup(); e != nil {
-					internal.WriteErrLog("QUIC: read message", e, addr)
-					return
-				}
-
-				if e = internal.Deadline(stream, v.conf.Timeout); e != nil {
-					internal.WriteErrLog("QUIC: update timeout", e, addr)
-					return
-				}
-
-				v.handler.Handler(cp)
-
-				if e = cp.Release(); e != nil {
-					internal.WriteErrLog("QUIC: write message", e, addr)
-					return
-				}
-			}
+			v.handlerFunc(ctx, stream, stream, addr)
 		})
 	}
 }
