@@ -1,31 +1,38 @@
 /*
- *  Copyright (c) 2024 Mikhail Knyazhev <markus621@yandex.ru>. All rights reserved.
+ *  Copyright (c) 2024-2025 Mikhail Knyazhev <markus621@yandex.ru>. All rights reserved.
  *  Use of this source code is governed by a BSD 3-Clause license that can be found in the LICENSE file.
  */
 
 package main
 
 import (
-	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"os"
 	"sync/atomic"
 	"time"
 
-	"go.osspkg.com/network/client"
+	"go.osspkg.com/ioutils/data"
 	"go.osspkg.com/syncing"
+
+	"go.osspkg.com/network/client"
 )
 
 func main() {
-	cli := &client.Client{
-		Address:      os.Getenv("ADDRESS"),
-		Network:      os.Getenv("NETWORK"),
-		MaxIdleConns: 10,
+	config := client.Config{
+		Address:  os.Getenv("ADDRESS"),
+		Network:  os.Getenv("NETWORK"),
+		MaxConns: 10,
 	}
 
-	if cli.Network == "quic" {
-		cli.Certificate = &client.Certificate{InsecureSkipVerify: true}
+	if config.Network == "quic" {
+		config.Certificate = &client.Certificate{InsecureSkipVerify: true}
+	}
+
+	cli, err := client.New(config)
+	if err != nil {
+		panic(err)
 	}
 
 	var (
@@ -36,19 +43,29 @@ func main() {
 	for i := 0; i < 3; i++ {
 		fmt.Println("------------ STEP", i, "---------------")
 		wg := syncing.NewGroup()
-		for i := 0; i < 100000; i++ {
+		for i := 0; i < 10000; i++ {
 			i := i
 			wg.Background(func() {
-				in := bytes.NewBufferString(fmt.Sprintf("<- %d ->", i))
-				out := bytes.NewBuffer(nil)
-				if err := cli.Do(in, out); err != nil {
-					fmt.Println(i, "ERR", err)
+				buff := data.NewBuffer(1024)
+				buff.WriteString(fmt.Sprintf("<- %d ->", i))
+				err := cli.Call(context.TODO(), func(ctx context.Context, w io.Writer, r io.Reader) error {
+					if _, err := buff.WriteTo(w); err != nil {
+						return err
+					}
+					buff.Reset()
+					if _, err := buff.ReadFrom(r); err != nil {
+						return err
+					}
+					return nil
+				})
+				if err != nil {
+					fmt.Println(i, "E", err)
 					atomic.AddInt64(&fail, 1)
-					return
+				} else {
+					fmt.Println(i, "B", buff.String())
+					atomic.AddInt64(&good, 1)
 				}
-				b, err := io.ReadAll(out)
-				fmt.Println(i, "E", err, "B", string(b))
-				atomic.AddInt64(&good, 1)
+
 			})
 		}
 		wg.Wait()

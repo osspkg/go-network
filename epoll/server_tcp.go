@@ -1,5 +1,5 @@
 /*
- *  Copyright (c) 2024 Mikhail Knyazhev <markus621@yandex.ru>. All rights reserved.
+ *  Copyright (c) 2024-2025 Mikhail Knyazhev <markus621@yandex.ru>. All rights reserved.
  *  Use of this source code is governed by a BSD 3-Clause license that can be found in the LICENSE file.
  */
 
@@ -14,9 +14,10 @@ import (
 
 	"go.osspkg.com/errors"
 	"go.osspkg.com/logx"
-	"go.osspkg.com/network/address"
 	"go.osspkg.com/syncing"
 	"go.osspkg.com/xc"
+
+	"go.osspkg.com/network/address"
 )
 
 type (
@@ -44,7 +45,7 @@ func (s *ServerTCP) init() (err error) {
 		return fmt.Errorf("epoll tcp: handler is empty")
 	}
 	s.wg = syncing.NewGroup()
-	s.Config.Addr = address.CheckHostPort(s.Config.Addr)
+	s.Config.Addr = address.ResolveIPPort(s.Config.Addr)
 	if s.Config.CountEvents == 0 {
 		s.Config.CountEvents = 100
 	}
