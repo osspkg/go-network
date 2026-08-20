@@ -1,5 +1,5 @@
 /*
- *  Copyright (c) 2024-2025 Mikhail Knyazhev <markus621@yandex.ru>. All rights reserved.
+ *  Copyright (c) 2024-2026 Mikhail Knyazhev <markus621@yandex.ru>. All rights reserved.
  *  Use of this source code is governed by a BSD 3-Clause license that can be found in the LICENSE file.
  */
 
@@ -42,7 +42,7 @@ func New(conf Config) Server {
 	return &_server{
 		conf: conf,
 		sync: syncing.NewSwitch(),
-		wg:   syncing.NewGroup(),
+		wg:   syncing.NewGroup(context.Background()),
 	}
 }
 
@@ -119,7 +119,7 @@ func (v *_server) build(ctx context.Context) error {
 func (v *_server) handlingPacketConn(ctx context.Context, l net.PacketConn) error {
 	ctx, cancel := context.WithCancel(ctx)
 
-	stop := internal.DeadlineUpdate(l)
+	stop := internal.AutoUpdateDeadline(l, 0)
 
 	defer func() {
 		stop()
@@ -127,8 +127,12 @@ func (v *_server) handlingPacketConn(ctx context.Context, l net.PacketConn) erro
 		v.wg.Wait()
 	}()
 
-	v.wg.Background(func() {
-		<-ctx.Done()
+	v.wg.Background("", func(wc context.Context) {
+		select {
+		case <-wc.Done():
+		case <-ctx.Done():
+		}
+
 		v.close()
 	})
 
@@ -154,7 +158,7 @@ func (v *_server) handlingPacketConn(ctx context.Context, l net.PacketConn) erro
 			return err
 		}
 
-		v.wg.Background(func() {
+		v.wg.Background("", func(wc context.Context) {
 			defer func() {
 				if e := recover(); e != nil {
 					internal.Log("PacketConn: panic", fmt.Errorf("%+v", e), addr)
@@ -171,8 +175,11 @@ func (v *_server) handlingPacketConn(ctx context.Context, l net.PacketConn) erro
 func (v *_server) handlingConn(ctx context.Context, l net.Listener) error {
 	ctx, cancel := context.WithCancel(ctx)
 
-	v.wg.Background(func() {
-		<-ctx.Done()
+	v.wg.Background("", func(wc context.Context) {
+		select {
+		case <-wc.Done():
+		case <-ctx.Done():
+		}
 		v.close()
 	})
 
@@ -204,8 +211,8 @@ func (v *_server) handlingConn(ctx context.Context, l net.Listener) error {
 			}
 		}
 
-		v.wg.Background(func() {
-			stop := internal.DeadlineUpdate(conn)
+		v.wg.Background("", func(wc context.Context) {
+			stop := internal.AutoUpdateDeadline(conn, 0)
 
 			defer func() {
 				if e := recover(); e != nil {
@@ -225,8 +232,11 @@ func (v *_server) handlingConn(ctx context.Context, l net.Listener) error {
 func (v *_server) handlingQUIC(ctx context.Context, l *quic.Listener) error {
 	ctx, cancel := context.WithCancel(ctx)
 
-	v.wg.Background(func() {
-		<-ctx.Done()
+	v.wg.Background("", func(wc context.Context) {
+		select {
+		case <-wc.Done():
+		case <-ctx.Done():
+		}
 		v.close()
 	})
 
@@ -250,7 +260,7 @@ func (v *_server) handlingQUIC(ctx context.Context, l *quic.Listener) error {
 
 		addr := conn.RemoteAddr()
 
-		v.wg.Background(func() {
+		v.wg.Background("", func(wc context.Context) {
 			defer func() {
 				if e := recover(); e != nil {
 					internal.Log("QUIC: panic", fmt.Errorf("%+v", e), addr)
@@ -265,7 +275,7 @@ func (v *_server) handlingQUIC(ctx context.Context, l *quic.Listener) error {
 				return
 			}
 
-			stop := internal.DeadlineUpdate(stream)
+			stop := internal.AutoUpdateDeadline(stream, 0)
 
 			defer func() {
 				stop()

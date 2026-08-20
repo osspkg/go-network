@@ -1,5 +1,5 @@
 /*
- *  Copyright (c) 2024-2025 Mikhail Knyazhev <markus621@yandex.ru>. All rights reserved.
+ *  Copyright (c) 2024-2026 Mikhail Knyazhev <markus621@yandex.ru>. All rights reserved.
  *  Use of this source code is governed by a BSD 3-Clause license that can be found in the LICENSE file.
  */
 
@@ -13,8 +13,8 @@ import (
 	"net"
 
 	"github.com/quic-go/quic-go"
-	"go.osspkg.com/algorithms/control"
 	"go.osspkg.com/errors"
+	"go.osspkg.com/syncing"
 
 	"go.osspkg.com/network/internal"
 )
@@ -27,7 +27,7 @@ type (
 	_client struct {
 		conf Config
 		tls  *tls.Config
-		sem  control.Semaphore
+		sem  syncing.Control
 	}
 )
 
@@ -50,7 +50,7 @@ func New(c Config) (Client, error) {
 
 	cli := &_client{
 		conf: c,
-		sem:  control.NewSemaphore(c.MaxConns),
+		sem:  syncing.NewControl(c.MaxConns),
 		tls:  tlsc,
 	}
 
@@ -98,7 +98,7 @@ func (v *_client) conn(ctx context.Context) (internal.Conn, error) {
 }
 
 func (v *_client) Call(ctx context.Context, handler func(ctx context.Context, w io.Writer, r io.Reader) error) (e error) {
-	v.sem.Acquire()
+	v.sem.Acquire(ctx)
 	defer func() { v.sem.Release() }()
 
 	conn, err := v.conn(ctx)
@@ -106,7 +106,7 @@ func (v *_client) Call(ctx context.Context, handler func(ctx context.Context, w 
 		return err
 	}
 
-	stop := internal.DeadlineUpdate(conn)
+	stop := internal.AutoUpdateDeadline(conn, 0)
 
 	defer func() {
 		stop()

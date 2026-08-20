@@ -3,7 +3,7 @@ SHELL=/bin/bash
 
 .PHONY: install
 install:
-	go install go.osspkg.com/goppy/v2/cmd/goppy@latest
+	go install go.osspkg.com/goppy/v3/cmd/goppy@latest
 	goppy setup-lib
 
 .PHONY: lint

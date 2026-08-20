@@ -1,5 +1,5 @@
 /*
- *  Copyright (c) 2024-2025 Mikhail Knyazhev <markus621@yandex.ru>. All rights reserved.
+ *  Copyright (c) 2024-2026 Mikhail Knyazhev <markus621@yandex.ru>. All rights reserved.
  *  Use of this source code is governed by a BSD 3-Clause license that can be found in the LICENSE file.
  */
 
@@ -12,7 +12,7 @@ import (
 	"net"
 	"os"
 
-	"go.osspkg.com/ioutils/data"
+	"go.osspkg.com/bb"
 	"go.osspkg.com/logx"
 
 	"go.osspkg.com/network/listen"
@@ -38,11 +38,11 @@ func main() {
 	srv := server.New(config)
 
 	srv.HandleFunc(func(ctx context.Context, w io.Writer, r io.Reader, addr net.Addr) {
-		buff := data.NewBuffer(1024)
+		buff := bb.New(1024)
 		_, err := buff.ReadFrom(r)
 		fmt.Println("[------", addr.String(), "------]", err, buff.String())
-		buff.Seek(0, 0)
-		buff.WriteTo(w)
+		buff.Seek(0, 0) //nolint:errcheck
+		buff.WriteTo(w) //nolint:errcheck
 	})
 
 	if err := srv.ListenAndServe(context.TODO()); err != nil {

@@ -1,5 +1,5 @@
 /*
- *  Copyright (c) 2024-2025 Mikhail Knyazhev <markus621@yandex.ru>. All rights reserved.
+ *  Copyright (c) 2024-2026 Mikhail Knyazhev <markus621@yandex.ru>. All rights reserved.
  *  Use of this source code is governed by a BSD 3-Clause license that can be found in the LICENSE file.
  */
 
@@ -26,11 +26,11 @@ type SSL struct {
 }
 
 type Certificate struct {
-	CAFile       string   `yaml:"ca_file"`
-	CertFile     string   `yaml:"cert_file"`
-	KeyFile      string   `yaml:"key_file"`
-	Addresses    []string `yaml:"addresses"`
-	AutoGenerate bool     `yaml:"auto_generate"`
+	CAFile       string   `yaml:"ca_file,omitempty" unic:"ca_file,omitempty,desc='Адрес корневого сертификата'"`
+	CertFile     string   `yaml:"cert_file,omitempty" unic:"cert_file,omitempty,desc='Адрес публичного сертификата'"`
+	KeyFile      string   `yaml:"key_file,omitempty" unic:"key_file,omitempty,desc='Адрес приватного ключа'"`
+	Addresses    []string `yaml:"addresses,omitempty" unic:"addresses,omitempty,desc='Список адресов для автогенерации сертификатов'"`
+	AutoGenerate bool     `yaml:"auto_generate,omitempty" unic:"auto_generate,omitempty,desc='Автогенерация сертификатов для списка адресов'"`
 }
 
 func NewTLSConfig(ssl *SSL) (*tls.Config, error) {

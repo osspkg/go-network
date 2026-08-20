@@ -1,5 +1,5 @@
 /*
- *  Copyright (c) 2024-2025 Mikhail Knyazhev <markus621@yandex.ru>. All rights reserved.
+ *  Copyright (c) 2024-2026 Mikhail Knyazhev <markus621@yandex.ru>. All rights reserved.
  *  Use of this source code is governed by a BSD 3-Clause license that can be found in the LICENSE file.
  */
 
@@ -13,7 +13,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"go.osspkg.com/ioutils/data"
+	"go.osspkg.com/bb"
 	"go.osspkg.com/syncing"
 
 	"go.osspkg.com/network/client"
@@ -35,6 +35,9 @@ func main() {
 		panic(err)
 	}
 
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+
 	var (
 		good int64
 		fail int64
@@ -42,13 +45,13 @@ func main() {
 
 	for i := 0; i < 3; i++ {
 		fmt.Println("------------ STEP", i, "---------------")
-		wg := syncing.NewGroup()
+		wg := syncing.NewGroup(ctx)
 		for i := 0; i < 10000; i++ {
 			i := i
-			wg.Background(func() {
-				buff := data.NewBuffer(1024)
-				buff.WriteString(fmt.Sprintf("<- %d ->", i))
-				err := cli.Call(context.TODO(), func(ctx context.Context, w io.Writer, r io.Reader) error {
+			wg.Background("", func(ctx context.Context) {
+				buff := bb.New(1024)
+				buff.WriteString(fmt.Sprintf("<- %d ->", i)) //nolint:errcheck,staticcheck
+				err := cli.Call(ctx, func(ctx context.Context, w io.Writer, r io.Reader) error {
 					if _, err := buff.WriteTo(w); err != nil {
 						return err
 					}
