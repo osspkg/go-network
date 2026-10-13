@@ -13,23 +13,26 @@ import (
 	"net"
 	"os"
 
-	"github.com/quic-go/quic-go"
 	"go.osspkg.com/errors"
 	"go.osspkg.com/ioutils/fs"
 	"go.osspkg.com/syncing"
 
-	"go.osspkg.com/network/address"
+	"go.osspkg.com/network/errs"
 	"go.osspkg.com/network/internal"
 	"go.osspkg.com/network/listen"
+	"go.osspkg.com/network/packet"
+	"go.osspkg.com/network/xio"
+	"go.osspkg.com/network/xnet"
 )
 
 type (
 	Server interface {
 		HandleFunc(func(ctx context.Context, w io.Writer, r io.Reader, addr net.Addr))
 		ListenAndServe(ctx context.Context) error
+		Close() error
 	}
 
-	_server struct {
+	object struct {
 		conf        Config
 		listener    io.Closer
 		handlerFunc func(ctx context.Context, w io.Writer, r io.Reader, addr net.Addr)
@@ -38,36 +41,53 @@ type (
 	}
 )
 
-func New(conf Config) Server {
-	return &_server{
-		conf: conf,
+func New(c Config) Server {
+	return &object{
+		conf: c,
 		sync: syncing.NewSwitch(),
 		wg:   syncing.NewGroup(context.Background()),
 	}
 }
 
-func (v *_server) HandleFunc(fn func(context.Context, io.Writer, io.Reader, net.Addr)) {
+func (v *object) HandleFunc(fn func(context.Context, io.Writer, io.Reader, net.Addr)) {
 	if v.sync.IsOn() {
 		return
 	}
 	v.handlerFunc = fn
 }
 
-func (v *_server) ListenAndServe(ctx context.Context) error {
+func (v *object) ListenAndServe(ctx context.Context) error {
 	if v.handlerFunc == nil {
-		return fmt.Errorf("handler not found")
+		return errors.New("handler not found")
 	}
 	if !v.sync.On() {
-		return internal.ErrServAlreadyRunning
+		return errs.ErrAlreadyRunning
 	}
 
-	if err := v.build(ctx); err != nil {
+	addr, err := v.conf.Resolve()
+	if err != nil {
 		return err
 	}
-
-	if l, ok := v.listener.(*quic.Listener); ok {
-		return v.handlingQUIC(ctx, l)
+	v.conf.Address = addr.String()
+	if v.conf.Network == xnet.NetUNIX && fs.FileExist(v.conf.Address) {
+		if err = os.Remove(v.conf.Address); err != nil {
+			return errors.Wrapf(err, "fail clean socket file")
+		}
 	}
+
+	var ssl *tls.Config
+	if v.conf.Certificate != nil {
+		ssl, err = v.conf.Certificate.Parse()
+		if err != nil {
+			return errors.Wrapf(err, "fail load certificate")
+		}
+	}
+
+	v.listener, err = listen.New(ctx, v.conf.Network, v.conf.Address, ssl)
+	if err != nil {
+		return errors.Wrapf(err, "fail create listener")
+	}
+
 	if l, ok := v.listener.(net.Listener); ok {
 		return v.handlingConn(ctx, l)
 	}
@@ -75,68 +95,41 @@ func (v *_server) ListenAndServe(ctx context.Context) error {
 		return v.handlingPacketConn(ctx, l)
 	}
 
-	return fmt.Errorf("unknown listener")
+	return errors.New("unknown listener")
 }
 
-func (v *_server) close() {
+func (v *object) Close() error {
 	if !v.sync.Off() {
-		return
+		return nil
 	}
-	v.listener.Close() // nolint: errcheck
+
+	v.wg.Cancel()
+
+	if v.listener == nil {
+		return nil
+	}
+	return v.listener.Close()
 }
 
-func (v *_server) build(ctx context.Context) error {
-	switch v.conf.Network {
-	case internal.NetTCP:
-		v.conf.Address = address.ResolveIPPort(v.conf.Address)
-	case internal.NetUDP:
-		v.conf.Address = address.ResolveIPPort(v.conf.Address)
-	case internal.NetQUIC:
-		v.conf.Address = address.ResolveIPPort(v.conf.Address)
-	case internal.NetUNIX:
-		if fs.FileExist(v.conf.Address) {
-			if err := os.Remove(v.conf.Address); err != nil {
-				return errors.Wrapf(err, "fail clean socket file")
-			}
-		}
-	}
+func (v *object) handlingPacketConn(ctx context.Context, l net.PacketConn) error {
+	defer v.wg.Wait()
 
-	ssl := &listen.SSL{}
-	if v.conf.SSL != nil {
-		ssl.Certs = append(ssl.Certs, v.conf.SSL.Certs...)
-		ssl.NextProtos = append(ssl.NextProtos, v.conf.SSL.NextProtos...)
-	}
-
-	l, err := listen.New(ctx, v.conf.Network, v.conf.Address, ssl)
-	if err != nil {
-		return err
-	}
-	v.listener = l
-
-	return nil
-}
-
-func (v *_server) handlingPacketConn(ctx context.Context, l net.PacketConn) error {
 	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 
-	stop := internal.AutoUpdateDeadline(l, 0)
+	v.wg.Background("deadline auto update", func(ctx context.Context) {
+		xio.AutoUpdate(ctx, l, 0)
+	})
 
-	defer func() {
-		stop()
-		cancel()
-		v.wg.Wait()
-	}()
-
-	v.wg.Background("", func(wc context.Context) {
+	v.wg.Background("auto close listener", func(wc context.Context) {
 		select {
 		case <-wc.Done():
 		case <-ctx.Done():
 		}
-
-		v.close()
+		internal.Log("PacketConn: close listener", v.Close(), nil)
 	})
 
-	buff := make([]byte, internal.UDPPacketSize)
+	buff := make([]byte, packet.Size)
 
 	for {
 		select {
@@ -148,17 +141,17 @@ func (v *_server) handlingPacketConn(ctx context.Context, l net.PacketConn) erro
 		n, addr, err := l.ReadFrom(buff)
 		if err != nil {
 			internal.Log("PacketConn: read message", err, addr)
-			return err
+			return errors.Wrapf(err, "fail read packet form: %s", addr.String())
 		}
 
 		req := internal.DataPool.Get()
 
 		if _, err = req.Write(buff[:n]); err != nil {
 			internal.Log("PacketConn: read message", err, addr)
-			return err
+			return errors.Wrapf(err, "fail write packet form: %s", addr.String())
 		}
 
-		v.wg.Background("", func(wc context.Context) {
+		v.wg.Background("call handler", func(wc context.Context) {
 			defer func() {
 				if e := recover(); e != nil {
 					internal.Log("PacketConn: panic", fmt.Errorf("%+v", e), addr)
@@ -167,26 +160,24 @@ func (v *_server) handlingPacketConn(ctx context.Context, l net.PacketConn) erro
 				internal.DataPool.Put(req)
 			}()
 
-			v.handlerFunc(ctx, &internal.PacketWrite{Addr: addr, Conn: l}, req, addr)
+			v.handlerFunc(ctx, &packet.Writer{Addr: addr, Conn: l}, req, addr)
 		})
 	}
 }
 
-func (v *_server) handlingConn(ctx context.Context, l net.Listener) error {
-	ctx, cancel := context.WithCancel(ctx)
+func (v *object) handlingConn(ctx context.Context, l net.Listener) error {
+	defer v.wg.Wait()
 
-	v.wg.Background("", func(wc context.Context) {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	v.wg.Background("auto close listener", func(wc context.Context) {
 		select {
 		case <-wc.Done():
 		case <-ctx.Done():
 		}
-		v.close()
+		internal.Log("Conn: close listener", v.Close(), nil)
 	})
-
-	defer func() {
-		cancel()
-		v.wg.Wait()
-	}()
 
 	for {
 		select {
@@ -198,7 +189,7 @@ func (v *_server) handlingConn(ctx context.Context, l net.Listener) error {
 		conn, err := l.Accept()
 		if err != nil {
 			internal.Log("Conn: accept", err, nil)
-			return err
+			return errors.Wrapf(err, "fail accept connection")
 		}
 
 		addr := conn.RemoteAddr()
@@ -211,78 +202,20 @@ func (v *_server) handlingConn(ctx context.Context, l net.Listener) error {
 			}
 		}
 
-		v.wg.Background("", func(wc context.Context) {
-			stop := internal.AutoUpdateDeadline(conn, 0)
+		v.wg.Background("deadline auto update", func(ctx context.Context) {
+			xio.AutoUpdate(ctx, conn, 0)
+		})
 
+		v.wg.Background("call handler", func(wc context.Context) {
 			defer func() {
 				if e := recover(); e != nil {
 					internal.Log("Conn: panic", fmt.Errorf("%+v", e), addr)
 				}
 
-				stop()
-
 				internal.Log("Conn: close", conn.Close(), addr)
 			}()
 
 			v.handlerFunc(ctx, conn, conn, addr)
-		})
-	}
-}
-
-func (v *_server) handlingQUIC(ctx context.Context, l *quic.Listener) error {
-	ctx, cancel := context.WithCancel(ctx)
-
-	v.wg.Background("", func(wc context.Context) {
-		select {
-		case <-wc.Done():
-		case <-ctx.Done():
-		}
-		v.close()
-	})
-
-	defer func() {
-		cancel()
-		v.wg.Wait()
-	}()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return nil
-		default:
-		}
-
-		conn, err := l.Accept(ctx)
-		if err != nil {
-			internal.Log("QUIC: accept", err, nil)
-			return err
-		}
-
-		addr := conn.RemoteAddr()
-
-		v.wg.Background("", func(wc context.Context) {
-			defer func() {
-				if e := recover(); e != nil {
-					internal.Log("QUIC: panic", fmt.Errorf("%+v", e), addr)
-				}
-
-				//internal.Log("QUIC: close conn", conn.CloseWithError(0, ""), addr)
-			}()
-
-			stream, e := conn.AcceptStream(ctx)
-			if e != nil {
-				internal.Log("QUIC: read message", e, addr)
-				return
-			}
-
-			stop := internal.AutoUpdateDeadline(stream, 0)
-
-			defer func() {
-				stop()
-				internal.Log("QUIC: close stream", stream.Close(), addr)
-			}()
-
-			v.handlerFunc(ctx, stream, stream, addr)
 		})
 	}
 }

@@ -21,13 +21,8 @@ import (
 
 func main() {
 	config := client.Config{
-		Address:  os.Getenv("ADDRESS"),
-		Network:  os.Getenv("NETWORK"),
-		MaxConns: 10,
-	}
-
-	if config.Network == "quic" {
-		config.Certificate = &client.Certificate{InsecureSkipVerify: true}
+		Address: os.Getenv("ADDRESS"),
+		Network: os.Getenv("NETWORK"),
 	}
 
 	cli, err := client.New(config)

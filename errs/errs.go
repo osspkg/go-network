@@ -10,22 +10,39 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/quic-go/quic-go"
 	"go.osspkg.com/errors"
 )
+
+var (
+	ErrAlreadyRunning     = errors.New("already running")
+	ErrAlreadyStopped     = errors.New("already stopped")
+	ErrInvalidCertificate = errors.New("invalid certificate")
+)
+
+func IsNormalClosed(err error) bool {
+	if err == nil {
+		return true
+	}
+	return IsClosed(err)
+}
 
 func IsClosed(err error) bool {
 	if err == nil {
 		return false
 	}
-	if errors.Is(err, io.EOF) ||
-		errors.Is(err, quic.ErrServerClosed) ||
-		errors.Is(err, http.ErrServerClosed) ||
-		strings.Contains(err.Error(), "i/o timeout") ||
-		strings.Contains(err.Error(), "use of closed network connection") ||
-		strings.Contains(err.Error(), "deadline exceeded") ||
-		strings.Contains(err.Error(), "server closed") {
+
+	if errors.Is(err, io.EOF) || errors.Is(err, http.ErrServerClosed) {
 		return true
 	}
+
+	strErr := strings.ToLower(err.Error())
+
+	if strings.Contains(strErr, "i/o timeout") ||
+		strings.Contains(strErr, "use of closed network connection") ||
+		strings.Contains(strErr, "deadline exceeded") ||
+		strings.Contains(strErr, "server closed") {
+		return true
+	}
+
 	return false
 }

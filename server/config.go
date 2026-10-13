@@ -5,16 +5,33 @@
 
 package server
 
-import "go.osspkg.com/network/listen"
+import (
+	"fmt"
+	"net"
 
-type (
-	Config struct {
-		Address string `yaml:"address" unic:"address,default='127.0.0.1:80',desc='ip:port для прослушивания сервером'"`
-		Network string `yaml:"network" unic:"network,default='tcp',desc='Тип сетевого протокола (tcp,udp,unix,quic)'"`
-		SSL     *SSL   `yaml:"ssl,omitempty" unic:"ssl,omitempty,desc='Настройки шифрования соединения'"`
-	}
-	SSL struct {
-		Certs      []listen.Certificate `yaml:"certs,omitempty" unic:"certs,omitempty,desc='Список сертификатов'"`
-		NextProtos []string             `yaml:"next_protos,omitempty" unic:"next_protos,omitempty,desc='Поддерживаемые уровни протоколов'"`
-	}
+	"go.osspkg.com/network/cert"
+	"go.osspkg.com/network/xnet"
 )
+
+type Config struct {
+	Address     string             `yaml:"address" unic:"address,default='127.0.0.1:80',desc='Адрес сервера'"`
+	Network     string             `yaml:"network" unic:"network,default='tcp',desc='Тип сетевого протокола (tcp,udp,unix)'"`
+	Certificate *cert.ServerConfig `yaml:"certificate,omitempty" unic:"certificate,omitempty,desc='Настройки шифрования соединения'"`
+}
+
+func (c Config) Resolve() (fmt.Stringer, error) {
+	if err := xnet.IsPassableNetwork(c.Network); err != nil {
+		return nil, err
+	}
+
+	switch c.Network {
+	case xnet.NetTCP:
+		return net.ResolveTCPAddr(xnet.NetTCP, c.Address)
+	case xnet.NetUDP:
+		return net.ResolveUDPAddr(xnet.NetUDP, c.Address)
+	case xnet.NetUNIX:
+		return net.ResolveUnixAddr(xnet.NetUNIX, c.Address)
+	default:
+		return nil, fmt.Errorf("invalid network name, use: tcp, udp, unix")
+	}
+}

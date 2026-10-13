@@ -13,26 +13,14 @@ import (
 	"os"
 
 	"go.osspkg.com/bb"
-	"go.osspkg.com/logx"
 
-	"go.osspkg.com/network/listen"
 	"go.osspkg.com/network/server"
 )
 
 func main() {
-	logx.SetLevel(logx.LevelDebug)
-
 	config := server.Config{
 		Address: os.Getenv("ADDRESS"),
 		Network: os.Getenv("NETWORK"),
-	}
-
-	if config.Network == "quic" {
-		config.SSL = &server.SSL{
-			Certs: []listen.Certificate{
-				{AutoGenerate: true, Addresses: []string{"127.0.0.1"}},
-			},
-		}
 	}
 
 	srv := server.New(config)

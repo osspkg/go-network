@@ -3,7 +3,7 @@
  *  Use of this source code is governed by a BSD 3-Clause license that can be found in the LICENSE file.
  */
 
-package internal_test
+package packet_test
 
 import (
 	"net"
@@ -12,7 +12,7 @@ import (
 	"go.osspkg.com/bb"
 	"go.osspkg.com/casecheck"
 
-	"go.osspkg.com/network/internal"
+	"go.osspkg.com/network/packet"
 )
 
 type mockConn struct {
@@ -24,7 +24,7 @@ func (m *mockConn) WriteTo(p []byte, _ net.Addr) (n int, err error) {
 }
 
 func TestUnit_PacketWrite(t *testing.T) {
-	a := internal.PacketWrite{
+	a := packet.Writer{
 		Addr: nil,
 		Conn: &mockConn{
 			B: bb.New(0),
