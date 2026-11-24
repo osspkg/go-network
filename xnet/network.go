@@ -1,13 +1,11 @@
 /*
- *  Copyright (c) 2024-2026 Mikhail Knyazhev <markus621@yandex.ru>. All rights reserved.
+ *  Copyright (c) 2024-2026 Mikhail Knyazhev <markus621@yandex.com>. All rights reserved.
  *  Use of this source code is governed by a BSD 3-Clause license that can be found in the LICENSE file.
  */
 
 package xnet
 
-import (
-	"fmt"
-)
+import "go.osspkg.com/errors"
 
 const (
 	NetTCP  = "tcp"
@@ -20,6 +18,6 @@ func IsPassableNetwork(network string) error {
 	case NetTCP, NetUDP, NetUNIX:
 		return nil
 	default:
-		return fmt.Errorf("invalid network type, use: tcp, udp, unix")
+		return errors.New("invalid network type, use: tcp, udp, unix")
 	}
 }

@@ -1,5 +1,5 @@
 /*
- *  Copyright (c) 2024-2026 Mikhail Knyazhev <markus621@yandex.ru>. All rights reserved.
+ *  Copyright (c) 2024-2026 Mikhail Knyazhev <markus621@yandex.com>. All rights reserved.
  *  Use of this source code is governed by a BSD 3-Clause license that can be found in the LICENSE file.
  */
 
@@ -9,13 +9,11 @@ import (
 	"crypto/tls"
 
 	"go.osspkg.com/errors"
-
-	"go.osspkg.com/network/errs"
 )
 
 type ClientConfig struct {
-	Certs              []Certificate `yaml:"certs,omitempty" unic:"certs,omitempty,desc='Список сертификатов'"`
-	InsecureSkipVerify bool          `yaml:"insecure_skip_verify,omitempty" unic:"insecure_skip_verify,omitempty,default='false',desc='Пропускать проверку корневых сертификатов'"`
+	Certs              []Certificate `yaml:"certs,omitempty" unic:"certs,omitempty,desc='List of certificates'"`
+	InsecureSkipVerify bool          `yaml:"insecure_skip_verify,omitempty" unic:"insecure_skip_verify,omitempty,default='false',desc='Skip root certificate verification'"`
 }
 
 func (v *ClientConfig) Parse() (*tls.Config, error) {
@@ -31,7 +29,7 @@ func (v *ClientConfig) Parse() (*tls.Config, error) {
 			return nil, err
 		}
 		if c == nil {
-			return nil, errs.ErrInvalidCertificate
+			return nil, ErrInvalidCertificate
 		}
 		config.Certificates = append(config.Certificates, *c)
 	}

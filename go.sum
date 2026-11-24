@@ -1,12 +1,4 @@
-go.osspkg.com/bb v1.0.3 h1:4dbxfMN/6Kc2eFaHITdSP982M39L3RZ8l+fPw+nU9VA=
-go.osspkg.com/bb v1.0.3/go.mod h1:bh7v2dIXJC0ge8BZLsh10EFRbJSLjXCmxq4IwSogc58=
 go.osspkg.com/casecheck v0.3.2 h1:KDdtEsEnGcDKjtg8FKL0hjnVZ7kusmXBD/VS/5IKSjE=
 go.osspkg.com/casecheck v0.3.2/go.mod h1:nf1vimi3VPl1o0hV+bKZsy3+1Qi8wNRRWiNGqivFV1A=
 go.osspkg.com/errors v0.4.1 h1:lG2chmJaeZBFf/wL1cN4bSppcLYl7tAif/hio2CkuSM=
 go.osspkg.com/errors v0.4.1/go.mod h1:drWMo4bACiKICOGBR4Za2wYwGB4RMnxeh67QVolJNRc=
-go.osspkg.com/ioutils v0.8.1 h1:U0m+n2gxwFHaTIQ2qYqHIeCplFIriSkl1VbWxBov69c=
-go.osspkg.com/ioutils v0.8.1/go.mod h1:QwhZVX+Eg6wgP4EM3uJKY9VLSuXT1drHQv3UeHgFE+o=
-go.osspkg.com/logx v0.7.0 h1:Bd0EcuJksAWQcp5aBzV+l08tNE7AnO6nRO3nO5pjr4E=
-go.osspkg.com/logx v0.7.0/go.mod h1:zMuBGKi1tw6g2I1pS5kdvkCGSKqGsksJ2yUsJsa1qMs=
-go.osspkg.com/syncing v0.5.0 h1:mgrwnn6381GiLZsuAXGWKk3AnBdm9HbaYwPyBMPoa/k=
-go.osspkg.com/syncing v0.5.0/go.mod h1:/LBmgCAHFW6nQgVDILpEuo6eRCFK1yyFeNbDs4eVNls=

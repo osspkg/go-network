@@ -1,5 +1,5 @@
 /*
- *  Copyright (c) 2024-2026 Mikhail Knyazhev <markus621@yandex.ru>. All rights reserved.
+ *  Copyright (c) 2024-2026 Mikhail Knyazhev <markus621@yandex.com>. All rights reserved.
  *  Use of this source code is governed by a BSD 3-Clause license that can be found in the LICENSE file.
  */
 
@@ -8,9 +8,10 @@ package listen
 import (
 	"context"
 	"crypto/tls"
-	"fmt"
 	"io"
 	"net"
+
+	"go.osspkg.com/errors"
 
 	"go.osspkg.com/network/xnet"
 )
@@ -24,7 +25,7 @@ func New(ctx context.Context, network, address string, ssl *tls.Config) (io.Clos
 	case xnet.NetUNIX:
 		return newListen(ctx, network, address, nil)
 	default:
-		return nil, fmt.Errorf("invalid network type, use: tcp, udp, unix")
+		return nil, errors.New("invalid network type, use: tcp, udp, unix")
 	}
 }
 
