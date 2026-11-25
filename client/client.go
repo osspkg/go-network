@@ -1,5 +1,5 @@
 /*
- *  Copyright (c) 2024-2026 Mikhail Knyazhev <markus621@yandex.ru>. All rights reserved.
+ *  Copyright (c) 2024-2026 Mikhail Knyazhev <markus621@yandex.com>. All rights reserved.
  *  Use of this source code is governed by a BSD 3-Clause license that can be found in the LICENSE file.
  */
 
@@ -8,112 +8,145 @@ package client
 import (
 	"context"
 	"crypto/tls"
-	"fmt"
 	"io"
 	"net"
 
-	"github.com/quic-go/quic-go"
 	"go.osspkg.com/errors"
-	"go.osspkg.com/syncing"
 
-	"go.osspkg.com/network/internal"
+	"go.osspkg.com/network/proto/udpframe"
+	"go.osspkg.com/network/xnet"
 )
 
-type (
-	Client interface {
-		Call(ctx context.Context, handler func(ctx context.Context, w io.Writer, r io.Reader) error) error
+type object struct {
+	conf Config
+	tls  *tls.Config
+	pool *connPool
+}
+
+// New creates a client with a bounded connection pool. Use WithPoolSize and
+// WithIdleTimeout to configure its limits.
+func New(c Config, options ...Option) (Client, error) {
+	if err := xnet.IsPassableNetwork(c.Network); err != nil {
+		return nil, err
+	}
+	if c.Address == "" {
+		return nil, errors.New("client address is empty")
+	}
+	switch c.Network {
+	case xnet.NetTCP, xnet.NetUDP:
+		if _, _, err := net.SplitHostPort(c.Address); err != nil {
+			return nil, errors.Wrapf(err, "invalid %s address %q", c.Network, c.Address)
+		}
+	case xnet.NetUNIX:
+		if _, err := net.ResolveUnixAddr(xnet.NetUNIX, c.Address); err != nil {
+			return nil, errors.Wrapf(err, "invalid unix address %q", c.Address)
+		}
 	}
 
-	_client struct {
-		conf Config
-		tls  *tls.Config
-		sem  syncing.Control
-	}
-)
-
-func New(c Config) (Client, error) {
-	addr, err := c.Resolve()
-	if err != nil {
-		return nil, fmt.Errorf("resolve address: %w", err)
+	opts := defaultOptions()
+	for _, option := range options {
+		if option == nil {
+			return nil, errors.New("client option is nil")
+		}
+		if err := option(&opts); err != nil {
+			return nil, errors.Wrapf(err, "invalid client option")
+		}
 	}
 
-	c.Address = addr.String()
-
-	tlsc, err := c.Certificate.Config(c.Address, c.Network)
-	if err != nil {
-		return nil, fmt.Errorf("get tls config: %w", err)
+	cli := &object{conf: c}
+	if c.Certificate != nil {
+		if c.Network != xnet.NetTCP {
+			return nil, errors.New("TLS certificate configuration is only supported with TCP")
+		}
+		config, err := c.Certificate.Parse()
+		if err != nil {
+			return nil, errors.Wrapf(err, "fail parse certificate")
+		}
+		cli.tls = config
 	}
 
-	if c.MaxConns <= 0 {
-		c.MaxConns = 1
-	}
-
-	cli := &_client{
-		conf: c,
-		sem:  syncing.NewControl(c.MaxConns),
-		tls:  tlsc,
-	}
-
+	cli.pool = newConnPool(opts.poolSize, opts.idleTimeout, cli.dial)
 	return cli, nil
 }
 
-func (v *_client) conn(ctx context.Context) (internal.Conn, error) {
-	switch v.conf.Network {
-	case internal.NetQUIC:
-		conn, err := quic.DialAddr(ctx, v.conf.Address, v.tls, &quic.Config{EnableDatagrams: false})
-		if err != nil {
-			return nil, fmt.Errorf("dial quic: %w", err)
+func (v *object) dial(ctx context.Context) (net.Conn, error) {
+	if v.conf.Network == xnet.NetTCP && v.tls != nil {
+		dialer := &tls.Dialer{
+			NetDialer: new(net.Dialer),
+			Config:    v.tls,
 		}
-
-		stream, err := conn.OpenStreamSync(ctx)
+		conn, err := dialer.DialContext(ctx, v.conf.Network, v.conf.Address)
 		if err != nil {
-			return nil, fmt.Errorf("open stream quic: %w", errors.Wrap(err, conn.CloseWithError(0, "")))
-		}
-		return &rwc{D: stream, R: stream, W: stream, C: func() error {
-			return errors.Wrap(stream.Close(), conn.CloseWithError(0, ""))
-		}}, nil
-
-	case internal.NetTCP:
-		if v.tls != nil {
-			dial := &tls.Dialer{
-				NetDialer: new(net.Dialer),
-				Config:    v.tls,
-			}
-			conn, err := dial.DialContext(ctx, v.conf.Network, v.conf.Address)
-			if err != nil {
-				return nil, fmt.Errorf("dial tcp tls: %w", err)
-			}
-			return conn, nil
-		}
-		fallthrough
-
-	default:
-		var dial net.Dialer
-		conn, err := dial.DialContext(ctx, v.conf.Network, v.conf.Address)
-		if err != nil {
-			return nil, fmt.Errorf("dial %s: %w", v.conf.Network, err)
+			return nil, errors.Wrapf(err, "fail dial connection %s", v.conf.Address)
 		}
 		return conn, nil
 	}
+
+	var dialer net.Dialer
+	conn, err := dialer.DialContext(ctx, v.conf.Network, v.conf.Address)
+	if err != nil {
+		return nil, errors.Wrapf(err, "fail dial connection %s", v.conf.Address)
+	}
+	if v.conf.Network == xnet.NetUDP {
+		return udpframe.NewDatagramConn(conn), nil
+	}
+	return conn, nil
 }
 
-func (v *_client) Call(ctx context.Context, handler func(ctx context.Context, w io.Writer, r io.Reader) error) (e error) {
-	v.sem.Acquire(ctx)
-	defer func() { v.sem.Release() }()
+// Call borrows one connection from the pool for the duration of handler.
+// Stream handlers must read the complete response before returning so a
+// connection can be safely reused. The handler must not retain rw after
+// returning. UDP uses the GONETUD1 framing format for all messages and requires
+// the peer to echo each request ID in its response. A handler error discards
+// the connection.
+func (v *object) Call(ctx context.Context, handler func(io.ReadWriter) error) error {
+	if ctx == nil {
+		return errors.New("client context is nil")
+	}
+	if handler == nil {
+		return errors.New("client handler is nil")
+	}
 
-	conn, err := v.conn(ctx)
+	pooled, err := v.pool.acquire(ctx)
 	if err != nil {
 		return err
 	}
+	if err = ctx.Err(); err != nil {
+		v.pool.release(pooled, false)
+		return err
+	}
 
-	stop := internal.AutoUpdateDeadline(conn, 0)
-
+	if udpConn, ok := pooled.conn.(*udpframe.DatagramConn); ok {
+		udpConn.BeginCall()
+	}
+	stopCancel := context.AfterFunc(ctx, func() {
+		_ = pooled.conn.Close()
+	})
+	reusable := false
 	defer func() {
-		stop()
-		e = errors.Wrap(e, conn.Close())
+		stopped := stopCancel()
+		v.pool.release(pooled, reusable && stopped)
 	}()
+	if err = ctx.Err(); err != nil {
+		return err
+	}
 
-	e = handler(ctx, conn, conn)
+	if err = handler(pooled.conn); err != nil {
+		return err
+	}
+	if udpConn, ok := pooled.conn.(*udpframe.DatagramConn); ok && udpConn.RequestStarted() {
+		if err = udpConn.FlushRequest(); err != nil {
+			return err
+		}
+	}
+	if err = ctx.Err(); err != nil {
+		return err
+	}
+	reusable = true
+	return nil
+}
 
-	return
+// Close closes idle and active connections and rejects future Call invocations.
+func (v *object) Close() error {
+	return v.pool.Close()
 }
